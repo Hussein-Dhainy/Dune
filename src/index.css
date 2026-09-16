@@ -1,0 +1,49 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #ffffff;
+  background: #111111;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+html, body, #root, .experience { width: 100%; height: 100%; }
+.experience { height: 100svh; }
+
+body { overflow: hidden; }
+.experience { position: relative; isolation: isolate; }
+.loop-scroll {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: none;
+  scrollbar-width: none;
+  overflow-anchor: none;
+  scroll-behavior: auto;
+}
+.loop-scroll::-webkit-scrollbar { display: none; }
+.loop-scroll:focus-visible { outline: 1px solid #d5a666; outline-offset: -4px; }
+.loop-scroll-spacer { height: 20100%; pointer-events: none; }
+.brand, .scroll-hint { position: absolute; z-index: 3; pointer-events: none; }
+.brand { top: 32px; left: 32px; font-size: 28px; letter-spacing: 0.2em; }
+.brand span { display: block; margin-top: 8px; font-size: 11px; letter-spacing: 0.06em; color: #c5ac86; }
+.scroll-hint { left: 32px; bottom: 24px; font-size: 12px; color: #c5ac86; }
+.loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: #191614; font-size: 13px; }
+.transition-veil { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #191614; opacity: 0; }
+.debug-overlay { position: absolute; top: 24px; right: 24px; z-index: 5; padding: 14px; border: 1px solid #5b4a39; border-radius: 6px; background: #191614e8; font: 11px/1.6 monospace; max-width: calc(100% - 32px); }
+.debug-overlay summary { cursor: pointer; }
+.debug-overlay output { display: block; white-space: pre-line; margin: 12px 0; }
+.debug-buttons { display: grid; gap: 6px; }
+.debug-buttons > div { display: flex; gap: 6px; }
+button { padding: 6px 10px; border: 1px solid #75614b; border-radius: 3px; background: #30271f; color: #f5e9d7; cursor: pointer; font: inherit; }
+button:disabled { opacity: 0.4; cursor: default; }
+button:focus-visible { outline: 2px solid #d5a666; }
+@media (max-width: 600px) {
+  .brand { top: 20px; left: 20px; font-size: 22px; }
+  .debug-overlay { top: 110px; right: 16px; }
+  .scroll-hint { left: 20px; font-size: 10px; }
+}
