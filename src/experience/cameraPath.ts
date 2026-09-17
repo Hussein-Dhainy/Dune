@@ -5,9 +5,7 @@ type Point = readonly [number, number, number]
 export type CameraPose = { position: Point; target: Point }
 
 export const cameraPoses: readonly CameraPose[] = [
-  { position: [8, 6, 11], target: [0, 1.2, 0] },
-  { position: [39, 5, 10], target: [32, 1.2, 0] },
-  { position: [70, 5, 11], target: [64, 1.8, 0] },
+  { position: [-3, 3.5, 15.5], target: [0, 1.2, 0] },
 ]
 export const introPose: CameraPose = { position: [0, 22, 0.01], target: [0, 0, 0] }
 

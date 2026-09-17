@@ -26,6 +26,7 @@ body { overflow: hidden; }
   scroll-behavior: auto;
 }
 .loop-scroll::-webkit-scrollbar { display: none; }
+.camera-debug .loop-scroll { pointer-events: none; }
 .loop-scroll:focus-visible { outline: 1px solid #d5a666; outline-offset: -4px; }
 .loop-scroll-spacer { height: 20100%; pointer-events: none; }
 .brand, .scroll-hint { position: absolute; z-index: 3; pointer-events: none; }
@@ -35,15 +36,28 @@ body { overflow: hidden; }
 .loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: #191614; font-size: 13px; }
 .transition-veil { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #191614; opacity: 0; }
 .debug-overlay { position: absolute; top: 24px; right: 24px; z-index: 5; padding: 14px; border: 1px solid #5b4a39; border-radius: 6px; background: #191614e8; font: 11px/1.6 monospace; max-width: calc(100% - 32px); }
+.lighting-debug { top: 72px; width: 280px; max-height: calc(100svh - 96px); overflow-y: auto; }
+.camera-debug-overlay { top: 24px; right: 320px; width: 300px; }
+.camera-debug-overlay p { margin: 10px 0 0; color: #c5ac86; }
 .debug-overlay summary { cursor: pointer; }
 .debug-overlay output { display: block; white-space: pre-line; margin: 12px 0; }
 .debug-buttons { display: grid; gap: 6px; }
 .debug-buttons > div { display: flex; gap: 6px; }
+.debug-field { display: block; margin-top: 8px; }
+.debug-field span { display: flex; justify-content: space-between; gap: 12px; }
+.debug-field input { width: 100%; accent-color: #d5a666; }
+.debug-color-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 12px; }
+.debug-color-grid label { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.debug-color-grid input { width: 28px; height: 20px; padding: 0; border: 0; background: none; }
+.debug-toggle { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.debug-actions { display: flex; gap: 6px; margin-top: 12px; }
 button { padding: 6px 10px; border: 1px solid #75614b; border-radius: 3px; background: #30271f; color: #f5e9d7; cursor: pointer; font: inherit; }
 button:disabled { opacity: 0.4; cursor: default; }
 button:focus-visible { outline: 2px solid #d5a666; }
 @media (max-width: 600px) {
   .brand { top: 20px; left: 20px; font-size: 22px; }
   .debug-overlay { top: 110px; right: 16px; }
+  .lighting-debug { top: 158px; max-height: calc(100svh - 174px); }
+  .camera-debug-overlay { top: 206px; right: 16px; }
   .scroll-hint { left: 20px; font-size: 10px; }
 }

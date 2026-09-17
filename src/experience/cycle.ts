@@ -1,7 +1,5 @@
 export const sections = [
   { id: 'pyramid', label: 'Pyramid', hold: 1.2, transition: 0.8 },
-  { id: 'pillars', label: 'Pillars', hold: 1.2, transition: 0.8 },
-  { id: 'portal', label: 'Portal', hold: 1.2, transition: 0.8 },
 ] as const
 
 export const cycleLength = sections.reduce((sum, section) => sum + section.hold + section.transition, 0)

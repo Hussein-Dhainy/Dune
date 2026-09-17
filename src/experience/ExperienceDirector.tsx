@@ -6,7 +6,9 @@ import { cameraPoses, introPose, mixPose, sampleCamera } from './cameraPath'
 import { cycleLength, sampleCycle, scrollConfig, sectionStart, sections, smoothPosition } from './cycle'
 import { useLoopScroll } from './useLoopScroll'
 
-export function ExperienceDirector() {
+const introDuration = 3.2
+
+export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebugEnabled?: boolean }) {
   const { state, setPhase, finishIntro } = useLoopScroll()
   const scene = useThree((root) => root.scene)
   const gl = useThree((root) => root.gl)
@@ -18,7 +20,7 @@ export function ExperienceDirector() {
 
   useEffect(() => {
     const entrance = gsap.timeline({ paused: true })
-      .to(state.current, { introProgress: 1, duration: 3.2, ease: 'none' })
+      .to(state.current, { introProgress: 1, duration: introDuration, ease: 'none' })
     const loop = gsap.timeline({ paused: true })
     for (let index = 0; index < sections.length; index++) {
       const { hold, transition } = sections[index]
@@ -54,14 +56,15 @@ export function ExperienceDirector() {
 
   const introElapsed = useRef(0)
   useFrame(({ camera, scene: world }, delta) => {
+    if (cameraDebugEnabled) return
     const current = state.current
     if (current.phase === 'intro') {
       introElapsed.current += Math.min(delta, 0.1)
-      intro.current?.time(current.reducedMotion ? 3.2 : introElapsed.current)
+      intro.current?.time(current.reducedMotion ? introDuration : introElapsed.current)
       const pose = mixPose(introPose, cameraPoses[0], current.introProgress)
       camera.position.set(...pose.position)
       camera.lookAt(...pose.target)
-      world.getObjectByName('landmarks')?.scale.setScalar(current.reducedMotion ? 1 : Math.max(0.001, current.introProgress))
+      world.getObjectByName('landmarks')?.scale.setScalar(1)
       if (current.introProgress >= 1) finishIntro()
     } else if (current.phase === 'interactive') {
       world.getObjectByName('landmarks')?.scale.setScalar(1)
