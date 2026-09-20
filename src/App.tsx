@@ -10,6 +10,7 @@ import { LightingDebug } from './experience/LightingDebug'
 import { useLoopScroll } from './experience/useLoopScroll'
 import { CameraDebugControls, CameraDebugPanel } from './experience/CameraDebug'
 import type { CameraPose } from './experience/cameraPath'
+import { SceneBloom } from './scene/SceneBloom'
 
 function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEnabled, cameraPose }: {
   lighting: LightingSettings
@@ -43,6 +44,7 @@ export default function App() {
           <Suspense fallback={null}>
             <Scene lighting={lighting} />
           </Suspense>
+          <SceneBloom lighting={lighting} />
           <ExperienceDirector cameraDebugEnabled={cameraDebugEnabled} />
           {import.meta.env.DEV && <CameraDebugControls enabled={cameraDebugEnabled} pose={cameraPose} />}
         </Canvas>

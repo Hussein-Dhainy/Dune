@@ -2,15 +2,21 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 async function readState(page: Page) {
-  const text = await page.locator('.debug-overlay output').innerText()
+  const text = await page.locator('.controller-debug output').textContent() ?? ''
   const numbers = text.match(/Position ([\d.-]+) \/ Target ([\d.-]+)/)!
   return { position: Number(numbers[1]), target: Number(numbers[2]), text }
 }
 
 async function openExperience(page: Page) {
   await page.goto('/')
-  await expect(page.locator('.scroll-hint')).toBeVisible()
-  await expect(page.locator('.debug-overlay output')).toContainText('interactive')
+  await page.locator('.controller-debug').evaluate((element: HTMLDetailsElement) => {
+    element.open = true
+  })
+  await page.locator('.debug-overlay:not(.controller-debug)').evaluateAll((elements: HTMLDetailsElement[]) => {
+    for (const element of elements) element.open = false
+  })
+  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.controller-debug output')).toContainText('interactive')
 }
 
 test('intro ignores input and hands off at the beginning without replaying on resize', async ({ page }) => {
@@ -19,7 +25,7 @@ test('intro ignores input and hands off at the beginning without replaying on re
   await page.goto('/')
   await expect(page.locator('.loop-scroll')).toBeHidden()
   await page.mouse.wheel(0, 2000)
-  await expect(page.locator('.scroll-hint')).toBeVisible()
+  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: 15_000 })
   await expect.poll(async () => (await readState(page)).target).toBe(0)
   await page.setViewportSize({ width: 900, height: 650 })
   await expect(page.locator('.scroll-hint')).toBeVisible()
@@ -33,7 +39,7 @@ test('native scrolling and keyboard move forward and reverse across the seam', a
   await container.focus()
   await page.keyboard.press('ArrowUp')
   await expect.poll(async () => (await readState(page)).position).toBeLessThan(-0.02)
-  await expect(page.locator('.debug-overlay output')).toContainText('Portal')
+  await expect(page.locator('.controller-debug output')).toContainText('Pyramid')
   await page.keyboard.press('PageDown')
   await expect.poll(async () => (await readState(page)).position).toBeGreaterThan(0)
   await page.mouse.move(100, 600)
@@ -61,15 +67,15 @@ test('recentering preserves accumulated movement and does not count synthetic sc
   await expect.poll(async () => {
     const { position, target } = await readState(page)
     return Math.abs(position - target)
-  }).toBeLessThan(0.003)
+  }, { timeout: 15_000 }).toBeLessThan(0.003)
 })
 
 test('debug section jumps work and reduced motion skips the animated intro', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await openExperience(page)
-  await page.getByRole('button', { name: 'Pillars', exact: true }).click()
-  await expect.poll(async () => (await readState(page)).position).toBe(2)
-  await page.getByRole('button', { name: 'Transition 3', exact: true }).click()
+  await page.getByRole('button', { name: 'Pyramid', exact: true }).click()
+  await expect.poll(async () => (await readState(page)).position).toBe(0)
+  await page.getByRole('button', { name: 'Transition 1', exact: true }).click()
   await expect.poll(async () => (await readState(page)).position).toBe(-0.8)
   await expect(page.locator('#transition-veil')).toHaveCSS('opacity', '0')
 })

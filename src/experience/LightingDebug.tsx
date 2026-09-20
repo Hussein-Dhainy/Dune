@@ -47,6 +47,10 @@ export function LightingDebug({ lighting, setLighting }: Props) {
           onChange={(event) => update('ambientColor', event.currentTarget.value)} /></label>
         <label>Sun <input type="color" value={lighting.sunColor}
           onChange={(event) => update('sunColor', event.currentTarget.value)} /></label>
+        <label>Exterior <input type="color" value={lighting.exteriorColor}
+          onChange={(event) => update('exteriorColor', event.currentTarget.value)} /></label>
+        <label>Core <input type="color" value={lighting.coreColor}
+          onChange={(event) => update('coreColor', event.currentTarget.value)} /></label>
       </div>
       <Slider label="Sun intensity" value={lighting.sunIntensity} min={0} max={8} step={0.05}
         onChange={(value) => update('sunIntensity', value)} />
@@ -54,6 +58,22 @@ export function LightingDebug({ lighting, setLighting }: Props) {
         onChange={(value) => update('sunAzimuth', value)} />
       <Slider label="Sun elevation" value={lighting.sunElevation} min={5} max={85} step={1}
         onChange={(value) => update('sunElevation', value)} />
+      <Slider label="Exterior intensity" value={lighting.exteriorIntensity} min={0} max={400} step={5}
+        onChange={(value) => update('exteriorIntensity', value)} />
+      <Slider label="Exterior azimuth" value={lighting.exteriorAzimuth} min={-180} max={180} step={1}
+        onChange={(value) => update('exteriorAzimuth', value)} />
+      <Slider label="Exterior elevation" value={lighting.exteriorElevation} min={10} max={85} step={1}
+        onChange={(value) => update('exteriorElevation', value)} />
+      <Slider label="Exterior radius" value={lighting.exteriorRadius} min={6} max={24} step={0.5}
+        onChange={(value) => update('exteriorRadius', value)} />
+      <Slider label="Exterior angle" value={lighting.exteriorAngle} min={0.25} max={1.2} step={0.01}
+        onChange={(value) => update('exteriorAngle', value)} />
+      <Slider label="Exterior softness" value={lighting.exteriorPenumbra} min={0} max={1} step={0.01}
+        onChange={(value) => update('exteriorPenumbra', value)} />
+      <Slider label="Exterior range" value={lighting.exteriorDistance} min={10} max={50} step={1}
+        onChange={(value) => update('exteriorDistance', value)} />
+      <Slider label="Exterior rim" value={lighting.exteriorRimStrength} min={0} max={1} step={0.01}
+        onChange={(value) => update('exteriorRimStrength', value)} />
       <Slider label="Ambient" value={lighting.ambientIntensity} min={0} max={3} step={0.05}
         onChange={(value) => update('ambientIntensity', value)} />
       <Slider label="Exposure" value={lighting.exposure} min={0.25} max={2} step={0.05}
@@ -62,6 +82,22 @@ export function LightingDebug({ lighting, setLighting }: Props) {
         onChange={(value) => update('fogNear', Math.min(value, lighting.fogFar - 1))} />
       <Slider label="Fog far" value={lighting.fogFar} min={20} max={400} step={1}
         onChange={(value) => update('fogFar', Math.max(value, lighting.fogNear + 1))} />
+      <Slider label="Core light base" value={lighting.coreLightBase} min={0} max={80} step={1}
+        onChange={(value) => update('coreLightBase', value)} />
+      <Slider label="Core light pulse" value={lighting.coreLightPulse} min={0} max={180} step={1}
+        onChange={(value) => update('coreLightPulse', value)} />
+      <Slider label="Inner glow" value={lighting.innerGlowStrength} min={0} max={5} step={0.05}
+        onChange={(value) => update('innerGlowStrength', value)} />
+      <Slider label="Rim strength" value={lighting.rimStrength} min={0} max={2} step={0.05}
+        onChange={(value) => update('rimStrength', value)} />
+      <Slider label="Base movement" value={lighting.baseMovement} min={0} max={1} step={0.01}
+        onChange={(value) => update('baseMovement', value)} />
+      <Slider label="Bloom strength" value={lighting.bloomStrength} min={0} max={1.5} step={0.01}
+        onChange={(value) => update('bloomStrength', value)} />
+      <Slider label="Bloom radius" value={lighting.bloomRadius} min={0} max={1} step={0.01}
+        onChange={(value) => update('bloomRadius', value)} />
+      <Slider label="Bloom threshold" value={lighting.bloomThreshold} min={0} max={1} step={0.01}
+        onChange={(value) => update('bloomThreshold', value)} />
       <label className="debug-toggle">
         <input type="checkbox" checked={lighting.shadows}
           onChange={(event) => update('shadows', event.currentTarget.checked)} /> Shadows

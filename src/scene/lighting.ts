@@ -9,8 +9,26 @@ export type LightingSettings = {
   sunIntensity: number
   sunAzimuth: number
   sunElevation: number
+  exteriorColor: string
+  exteriorIntensity: number
+  exteriorAzimuth: number
+  exteriorElevation: number
+  exteriorRadius: number
+  exteriorAngle: number
+  exteriorPenumbra: number
+  exteriorDistance: number
+  exteriorRimStrength: number
   exposure: number
   shadows: boolean
+  coreColor: string
+  coreLightBase: number
+  coreLightPulse: number
+  innerGlowStrength: number
+  rimStrength: number
+  baseMovement: number
+  bloomStrength: number
+  bloomRadius: number
+  bloomThreshold: number
 }
 
 export const defaultLighting: LightingSettings = {
@@ -19,11 +37,29 @@ export const defaultLighting: LightingSettings = {
   fogNear: 45,
   fogFar: 190,
   ambientColor: '#ffffff',
-  ambientIntensity: 0.8,
+  ambientIntensity: 0.5,
   sunColor: '#ffe0ad',
-  sunIntensity: 3,
+  sunIntensity: 1.35,
   sunAzimuth: 53,
   sunElevation: 48,
+  exteriorColor: '#ffd8a3',
+  exteriorIntensity: 180,
+  exteriorAzimuth: 45,
+  exteriorElevation: 52,
+  exteriorRadius: 14,
+  exteriorAngle: 0.68,
+  exteriorPenumbra: 0.78,
+  exteriorDistance: 28,
+  exteriorRimStrength: 0.24,
   exposure: 1,
   shadows: true,
+  coreColor: '#ffc46b',
+  coreLightBase: 9,
+  coreLightPulse: 21,
+  innerGlowStrength: 1,
+  rimStrength: 0.35,
+  baseMovement: 0.12,
+  bloomStrength: 0.2,
+  bloomRadius: 0.09,
+  bloomThreshold: 0.6,
 }

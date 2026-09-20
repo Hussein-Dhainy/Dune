@@ -15,7 +15,7 @@ export function DebugOverlay() {
   }, [state])
 
   return (
-    <details className="debug-overlay">
+    <details className="debug-overlay controller-debug">
       <summary>Controller debug</summary>
       <output ref={output} />
       <div className="debug-buttons">
