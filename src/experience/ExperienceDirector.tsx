@@ -55,7 +55,7 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
   }, [assetsActive, scene, gl, camera, state, setPhase])
 
   const introElapsed = useRef(0)
-  useFrame(({ camera, scene: world }, delta) => {
+  useFrame(({ camera }, delta) => {
     if (cameraDebugEnabled) return
     const current = state.current
     if (current.phase === 'intro') {
@@ -64,10 +64,8 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
       const pose = mixPose(introPose, cameraPoses[0], current.introProgress)
       camera.position.set(...pose.position)
       camera.lookAt(...pose.target)
-      world.getObjectByName('landmarks')?.scale.setScalar(1)
       if (current.introProgress >= 1) finishIntro()
     } else if (current.phase === 'interactive') {
-      world.getObjectByName('landmarks')?.scale.setScalar(1)
       // R3F animation state intentionally lives in a mutable ref, outside React rendering.
       // oxlint-disable-next-line react/immutability
       current.position = smoothPosition(current.position, current.target, Math.min(delta, 0.1), current.reducedMotion ? 0 : scrollConfig.damping)

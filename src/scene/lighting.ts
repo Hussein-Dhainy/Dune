@@ -1,65 +1,36 @@
 export type LightingSettings = {
   background: string
   fogColor: string
-  fogNear: number
-  fogFar: number
+  fogDensity: number
   ambientColor: string
   ambientIntensity: number
   sunColor: string
   sunIntensity: number
-  sunAzimuth: number
-  sunElevation: number
-  exteriorColor: string
-  exteriorIntensity: number
-  exteriorAzimuth: number
-  exteriorElevation: number
-  exteriorRadius: number
-  exteriorAngle: number
-  exteriorPenumbra: number
-  exteriorDistance: number
-  exteriorRimStrength: number
+  sunPositionX: number
+  sunPositionY: number
+  sunPositionZ: number
+  skyColor: string
+  groundColor: string
+  hemisphereIntensity: number
   exposure: number
-  shadows: boolean
-  coreColor: string
-  coreLightBase: number
-  coreLightPulse: number
-  innerGlowStrength: number
-  rimStrength: number
+  /** Not a light: scales how far pyramid blocks drift on their pulse animation. */
   baseMovement: number
-  bloomStrength: number
-  bloomRadius: number
-  bloomThreshold: number
 }
 
 export const defaultLighting: LightingSettings = {
-  background: '#9e8065',
-  fogColor: '#9e8065',
-  fogNear: 45,
-  fogFar: 190,
-  ambientColor: '#ffffff',
-  ambientIntensity: 0.5,
-  sunColor: '#ffe0ad',
-  sunIntensity: 1.35,
-  sunAzimuth: 53,
-  sunElevation: 48,
-  exteriorColor: '#ffd8a3',
-  exteriorIntensity: 180,
-  exteriorAzimuth: 45,
-  exteriorElevation: 52,
-  exteriorRadius: 14,
-  exteriorAngle: 0.68,
-  exteriorPenumbra: 0.78,
-  exteriorDistance: 28,
-  exteriorRimStrength: 0.24,
-  exposure: 1,
-  shadows: true,
-  coreColor: '#ffc46b',
-  coreLightBase: 9,
-  coreLightPulse: 21,
-  innerGlowStrength: 1,
-  rimStrength: 0.35,
+  background: '#c2a78e',
+  fogColor: '#bda087',
+  fogDensity: 0.0034,
+  ambientColor: '#ded1c3',
+  ambientIntensity: 0.06,
+  sunColor: '#ffe1b8',
+  sunIntensity: 3.2,
+  sunPositionX: 20,
+  sunPositionY: 18,
+  sunPositionZ: 10,
+  skyColor: '#dfcbb7',
+  groundColor: '#765d4b',
+  hemisphereIntensity: 0.38,
+  exposure: 0.95,
   baseMovement: 0.12,
-  bloomStrength: 0.2,
-  bloomRadius: 0.09,
-  bloomThreshold: 0.6,
 }

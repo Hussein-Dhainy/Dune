@@ -9,8 +9,8 @@ import { DebugOverlay } from './experience/DebugOverlay'
 import { LightingDebug } from './experience/LightingDebug'
 import { useLoopScroll } from './experience/useLoopScroll'
 import { CameraDebugControls, CameraDebugPanel } from './experience/CameraDebug'
+import { cameraPoses } from './experience/cameraPath'
 import type { CameraPose } from './experience/cameraPath'
-import { SceneBloom } from './scene/SceneBloom'
 
 function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEnabled, cameraPose }: {
   lighting: LightingSettings
@@ -36,7 +36,10 @@ function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEn
 export default function App() {
   const [lighting, setLighting] = useState(defaultLighting)
   const [cameraDebugEnabled, setCameraDebugEnabled] = useState(false)
-  const cameraPose = useRef<CameraPose>({ position: [-3, 3.5, 15.5], target: [0, 1.2, 0] })
+  // Seeded from the pose the experience actually settles on, so the lab opens
+  // where the scene is rather than at a copy that has to be kept in step.
+  // Never mutated: CameraDebugControls reassigns the whole object on capture.
+  const cameraPose = useRef<CameraPose>(cameraPoses[0])
   return (
     <main className={`experience${cameraDebugEnabled ? ' camera-debug' : ''}`}>
       <LoopScrollProvider>
@@ -44,7 +47,6 @@ export default function App() {
           <Suspense fallback={null}>
             <Scene lighting={lighting} />
           </Suspense>
-          <SceneBloom lighting={lighting} />
           <ExperienceDirector cameraDebugEnabled={cameraDebugEnabled} />
           {import.meta.env.DEV && <CameraDebugControls enabled={cameraDebugEnabled} pose={cameraPose} />}
         </Canvas>

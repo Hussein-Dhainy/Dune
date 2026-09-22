@@ -1,37 +1,58 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
-import { Box3, BoxGeometry, EdgesGeometry, LineBasicMaterial, LineSegments, MathUtils, Object3D, Quaternion, Raycaster, Vector2, Vector3 } from 'three'
-import type { Group, Material, Mesh, PointLight } from 'three'
+import {
+  Box3,
+  InstancedMesh,
+  MathUtils,
+  Matrix4,
+  Quaternion,
+  Vector3,
+} from 'three'
+import type { BufferGeometry, Group, Material, Mesh } from 'three'
 import type { LightingSettings } from './lighting'
-import { applyRevealShader, createRevealUniforms } from './reveal'
+import { applyRevealShader, createRevealUniforms, revealDepthWeight } from './reveal'
 import type { RevealUniforms } from './reveal'
 import { useLoopScroll } from '../experience/useLoopScroll'
-import { SandWind } from './SandWind'
-import { applyPyramidGlowShader, createPyramidGlowUniforms } from './pyramidGlow'
+import { usePyramidMaterial } from './pyramidMaterial'
+import { applyEdgeShader, buildEdgeGeometry, createEdgeUniforms } from './pyramidEdges'
 
-const pyramidModelUrl = '/models/pyramid.glb?v=separate-blocks-1'
+const pyramidModelUrl = '/models/pyramid.glb?v=non-beveled-untextured-1'
 const terrainModelUrl = '/models/desert-terrain.glb?v=groundsand-1'
 const revealDuration = 10
+// The desert measures ~522 world units from the reveal origin to its far
+// corner; the pyramid measures ~4.7. One shared cell size cannot serve both -
+// at the terrain's 1.35 the pyramid is spanned by only four cells and so
+// arrives in four visible pops rather than a sweep.
+const terrainRevealCellSize = 1.35
+const pyramidRevealCellSize = 0.3
+// The pyramid's own slice of the timeline. It still finishes about when the
+// sand at its base does, so the two still read as one event, but it is spread
+// over ~16 steps instead of four and starts from a much shorter dead spell.
+const pyramidRevealStart = 0.04
+const pyramidRevealEnd = 0.26
+const pyramidRevealEase = 1.2
 const pyramidPulsePeriod = 5.6
 const pyramidPulseDuration = 1.9
 const pyramidPulseTravel = 2.35
-const pyramidHoverInnerRadius = 0.45
-const pyramidHoverOuterRadius = 1.6
-const pyramidHoverStrength = 0.65
-const pyramidHoverDamping = 11
+
+// Scratch objects for the per-frame instance matrix rebuild, hoisted so the
+// pulse loop allocates nothing.
+const pulseOffset = new Vector3()
+const pulseMatrix = new Matrix4()
 
 type AnimatedPyramidBlock = {
-  mesh: Mesh
+  /** Which instanced batch this block lives in, and its slot inside it. */
+  batch: InstancedMesh
+  index: number
+  /** Resting transform, recomposed with the pulse offset every frame. */
   position: Vector3
   quaternion: Quaternion
+  scale: Vector3
   direction: Vector3
-  rotationAxis: Vector3
   delay: number
   distance: number
   height: number
-  hoverPosition: Vector3
-  hover: number
 }
 
 function prepareRevealMaterials(
@@ -59,250 +80,181 @@ function prepareRevealMaterials(
   return [...materials.values()]
 }
 
-function Pyramid({ reveal, rootRef, lighting, exteriorLightPosition }: {
+function Pyramid({ reveal, rootRef, lighting }: {
   reveal: RevealUniforms
   rootRef: React.RefObject<Group | null>
   lighting: LightingSettings
-  exteriorLightPosition: Vector3
 }) {
   const { scene } = useGLTF(pyramidModelUrl)
   const { state } = useLoopScroll()
-  const glow = useMemo(() => createPyramidGlowUniforms(), [])
-  const wireframes = useRef<LineBasicMaterial[]>([])
+  const pyramidMaterial = usePyramidMaterial()
+  const edges = useMemo(() => createEdgeUniforms(), [])
   const blocks = useRef<AnimatedPyramidBlock[]>([])
-  const raycastTargets = useRef<Mesh[]>([])
-  const hoverPoint = useRef(new Vector3())
-  const hoverActive = useRef(false)
+  const batches = useRef<InstancedMesh[]>([])
+  const batchRoot = useRef<Group>(null)
   const pulseElapsed = useRef(0)
-  const rotationDelta = useRef(new Quaternion())
-  const coreLight = useRef<PointLight>(null)
-  const raycaster = useMemo(() => new Raycaster(), [])
-  const pointer = useMemo(() => new Vector2(), [])
-  const gl = useThree((state) => state.gl)
-  const camera = useThree((state) => state.camera)
 
+  // Layout effect, not a passive one: the parent measures this group's bounds
+  // in its own layout effect to size the reveal, and child layout effects run
+  // first. Building the batches later would hand the parent an empty box.
   useLayoutEffect(() => {
-    coreLight.current?.getWorldPosition(glow.origin.value)
-  }, [glow])
+    const root = batchRoot.current
+    if (!root) return
 
-  useEffect(() => {
-    glow.color.value.set(lighting.coreColor)
-    glow.exteriorColor.value.set(lighting.exteriorColor)
-    glow.exteriorPosition.value.copy(exteriorLightPosition)
-    // Shared shader uniforms are mutable render state by design.
-    // oxlint-disable-next-line react/immutability
-    glow.exteriorRimStrength.value = lighting.exteriorRimStrength
-  }, [glow, exteriorLightPosition, lighting.coreColor, lighting.exteriorColor, lighting.exteriorRimStrength])
+    // Occupy exactly the frame the glTF scene root did, so the per-block
+    // matrices below (which are relative to that root) stay correct.
+    root.position.copy(scene.position)
+    root.quaternion.copy(scene.quaternion)
+    root.scale.copy(scene.scale)
+    scene.updateMatrixWorld(true)
+    const inverseScene = new Matrix4().copy(scene.matrixWorld).invert()
 
-  useEffect(() => {
-    const materials = prepareRevealMaterials(
-      scene,
-      reveal,
-      (material) => applyPyramidGlowShader(material, glow),
-    )
-    const edges: LineSegments[] = []
-    const animatedBlocks: AnimatedPyramidBlock[] = []
+    // The 146 blocks reuse only 8 geometries, so one instanced batch per
+    // geometry collapses 146 draw calls into 8.
+    const byGeometry = new Map<BufferGeometry, { mesh: Mesh; matrix: Matrix4 }[]>()
     scene.traverse((object) => {
-      if ('isMesh' in object) {
-        const mesh = object as Mesh
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-        mesh.geometry.computeBoundingBox()
-        const bounds = mesh.geometry.boundingBox!
-        const size = bounds.getSize(new Vector3())
-        const center = bounds.getCenter(new Vector3())
-        const box = new BoxGeometry(size.x, size.y, size.z)
-        const geometry = new EdgesGeometry(box)
-        box.dispose()
-        const material = new LineBasicMaterial({
-          color: '#e7b56f',
-          transparent: true,
-          opacity: 0,
-          depthWrite: false,
-        })
-        const lines = new LineSegments(geometry, material)
-        lines.name = 'Pyramid reveal edges'
-        lines.position.copy(center)
-        lines.renderOrder = 2
-        mesh.add(lines)
-        edges.push(lines)
-        wireframes.current.push(material)
-
-        const position = mesh.position.clone()
-        const hoverPosition = bounds.getCenter(new Vector3())
-        mesh.updateWorldMatrix(true, false)
-        hoverPosition.applyMatrix4(mesh.matrixWorld)
-        scene.worldToLocal(hoverPosition)
-        const height = MathUtils.clamp(position.y / 3.4, 0, 1)
-        const direction = new Vector3(
-          position.x,
-          0.45 + height * 1.35,
-          position.z,
-        ).normalize()
-        const nameSeed = [...mesh.name].reduce((sum, character) => sum + character.charCodeAt(0), 0)
-        const rotationAxis = new Vector3(
-          Math.sin(nameSeed * 1.7),
-          0.35,
-          Math.cos(nameSeed * 2.3),
-        ).normalize()
-        animatedBlocks.push({
-          mesh,
-          position,
-          quaternion: mesh.quaternion.clone(),
-          direction,
-          rotationAxis,
-          delay: MathUtils.mapLinear(position.x, -3.5, 3.5, 0, pyramidPulseTravel),
-          distance: MathUtils.lerp(0.72, 1.05, height),
-          height,
-          hoverPosition,
-          hover: 0,
-        })
-      }
+      if (!('isMesh' in object)) return
+      const mesh = object as Mesh
+      const matrix = new Matrix4().multiplyMatrices(inverseScene, mesh.matrixWorld)
+      const group = byGeometry.get(mesh.geometry)
+      if (group) group.push({ mesh, matrix })
+      else byGeometry.set(mesh.geometry, [{ mesh, matrix }])
     })
+
+    // Bounds measured in the same space as the block matrices, so the height
+    // ratio driving the pulse delay is consistent.
+    const pyramidBounds = new Box3()
+    for (const group of byGeometry.values()) {
+      for (const { mesh, matrix } of group) {
+        mesh.geometry.computeBoundingBox()
+        pyramidBounds.union(mesh.geometry.boundingBox!.clone().applyMatrix4(matrix))
+      }
+    }
+    const pyramidSize = pyramidBounds.getSize(new Vector3())
+    const pyramidCenter = pyramidBounds.getCenter(new Vector3())
+
+    // One material for every batch keeps this to a single shader program, and
+    // carries both the dissolve and the block outlines.
+    const material = pyramidMaterial.clone()
+    applyRevealShader(material, reveal)
+    applyEdgeShader(material, edges)
+
+    const animatedBlocks: AnimatedPyramidBlock[] = []
+    const createdBatches: InstancedMesh[] = []
+    const createdGeometries: BufferGeometry[] = []
+
+    for (const [geometry, group] of byGeometry) {
+      const edgeGeometry = buildEdgeGeometry(geometry, 25)
+      createdGeometries.push(edgeGeometry)
+      const batch = new InstancedMesh(edgeGeometry, material, group.length)
+      batch.name = 'Pyramid block batch'
+      batch.castShadow = true
+      batch.receiveShadow = true
+      batch.frustumCulled = false
+      createdBatches.push(batch)
+      root.add(batch)
+
+      const center = new Vector3()
+      for (const [index, { matrix }] of group.entries()) {
+        batch.setMatrixAt(index, matrix)
+
+        const position = new Vector3()
+        const quaternion = new Quaternion()
+        const scale = new Vector3()
+        matrix.decompose(position, quaternion, scale)
+
+        geometry.boundingBox!.getCenter(center)
+        const blockCenter = center.clone().applyMatrix4(matrix)
+        const height = MathUtils.clamp(
+          (blockCenter.y - pyramidBounds.min.y) / Math.max(pyramidSize.y, 0.0001),
+          0,
+          1,
+        )
+        const direction = new Vector3(
+          blockCenter.x - pyramidCenter.x,
+          0.45 + height * 1.35,
+          blockCenter.z - pyramidCenter.z,
+        ).normalize()
+
+        animatedBlocks.push({
+          batch,
+          index,
+          position,
+          quaternion,
+          scale,
+          direction,
+          delay: (1 - height) * pyramidPulseTravel,
+          distance: MathUtils.lerp(0.42, 0.78, height),
+          height,
+        })
+      }
+      batch.instanceMatrix.needsUpdate = true
+      // Box3.setFromObject falls back to this for instanced meshes, and the
+      // scene's reveal radius is derived from it.
+      batch.computeBoundingBox()
+      batch.computeBoundingSphere()
+    }
+
     blocks.current = animatedBlocks
-    raycastTargets.current = animatedBlocks.map((block) => block.mesh)
+    batches.current = createdBatches
+
     return () => {
-      for (const block of animatedBlocks) {
-        block.mesh.position.copy(block.position)
-        block.mesh.quaternion.copy(block.quaternion)
-      }
       blocks.current = []
-      raycastTargets.current = []
-      for (const lines of edges) {
-        lines.removeFromParent()
-        lines.geometry.dispose()
-        ;(lines.material as Material).dispose()
+      batches.current = []
+      for (const batch of createdBatches) {
+        batch.removeFromParent()
+        batch.dispose()
       }
-      wireframes.current = []
-      for (const material of materials) material.dispose()
+      for (const geometry of createdGeometries) geometry.dispose()
+      material.dispose()
     }
-  }, [scene, reveal, glow])
-
-  useEffect(() => {
-    const clearHover = () => { hoverActive.current = false }
-    const updateHover = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' || state.current.phase !== 'interactive') {
-        clearHover()
-        return
-      }
-
-      const bounds = gl.domElement.getBoundingClientRect()
-      if (
-        event.clientX < bounds.left || event.clientX > bounds.right
-        || event.clientY < bounds.top || event.clientY > bounds.bottom
-      ) {
-        clearHover()
-        return
-      }
-
-      pointer.set(
-        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-        -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
-      )
-      raycaster.setFromCamera(pointer, camera)
-      const hit = raycaster.intersectObjects(raycastTargets.current, false)[0]
-      if (!hit) {
-        clearHover()
-        return
-      }
-
-      hoverPoint.current.copy(hit.point)
-      scene.worldToLocal(hoverPoint.current)
-      hoverActive.current = true
-    }
-
-    window.addEventListener('pointermove', updateHover, { passive: true })
-    window.addEventListener('pointerleave', clearHover)
-    window.addEventListener('blur', clearHover)
-    return () => {
-      window.removeEventListener('pointermove', updateHover)
-      window.removeEventListener('pointerleave', clearHover)
-      window.removeEventListener('blur', clearHover)
-    }
-  }, [camera, gl, pointer, raycaster, scene, state])
+  }, [scene, reveal, pyramidMaterial, edges])
 
   useFrame((_, delta) => {
     const progress = reveal.timeline.value
     const fadeIn = MathUtils.smoothstep(progress, 0, 0.12)
     const fadeOut = 1 - MathUtils.smoothstep(progress, 0.72, 1)
-    const opacity = Math.min(fadeIn, fadeOut)
-    // Three material uniforms are mutable render-loop state by design.
+    // One shared uniform now, instead of one material per block.
+    // Shared shader uniforms are mutable render-loop state by design.
     // oxlint-disable-next-line react/immutability
-    for (const material of wireframes.current) material.opacity = opacity
+    edges.opacity.value = Math.min(fadeIn, fadeOut)
 
     const motionVisibility = state.current.reducedMotion
       ? 0
       : MathUtils.smootherstep(progress, 0.82, 1)
     if (motionVisibility > 0) pulseElapsed.current += Math.min(delta, 0.1)
 
-    let strongestPulse = 0
-    let combinedPulse = 0
-    const rotation = rotationDelta.current
     for (const block of blocks.current) {
       const phase = MathUtils.euclideanModulo(
         pulseElapsed.current - block.delay,
         pyramidPulsePeriod,
       )
-      const pulse = phase < pyramidPulseDuration
+      const activePulse = phase < pyramidPulseDuration
         ? Math.sin(Math.PI * phase / pyramidPulseDuration) ** 2 * motionVisibility
         : 0
-      const hoverTarget = hoverActive.current && !state.current.reducedMotion
-        ? (1 - MathUtils.smootherstep(
-            block.hoverPosition.distanceTo(hoverPoint.current),
-            pyramidHoverInnerRadius,
-            pyramidHoverOuterRadius,
-          )) * pyramidHoverStrength * motionVisibility
-        : 0
-      // Per-block interaction strength is mutable render-loop state by design.
-      // oxlint-disable-next-line react/immutability
-      block.hover = MathUtils.damp(block.hover, hoverTarget, pyramidHoverDamping, delta)
-      const activePulse = 1 - (1 - pulse) * (1 - block.hover)
-      strongestPulse = Math.max(strongestPulse, activePulse)
-      combinedPulse += activePulse
       const layerInfluence = MathUtils.smootherstep(block.height, 0.08, 0.55)
       const movementScale = MathUtils.lerp(lighting.baseMovement, 1, layerInfluence)
-      block.mesh.position.copy(block.position).addScaledVector(
+
+      // Instances are not scene-graph children, so the pulse offset has to be
+      // written straight into the batch's matrix buffer.
+      pulseOffset.copy(block.position).addScaledVector(
         block.direction,
         block.distance * activePulse * movementScale,
       )
-      rotation.setFromAxisAngle(block.rotationAxis, activePulse * 0.075)
-      block.mesh.quaternion.copy(block.quaternion).multiply(rotation)
+      pulseMatrix.compose(pulseOffset, block.quaternion, block.scale)
+      block.batch.setMatrixAt(block.index, pulseMatrix)
     }
 
-    const glowVisibility = MathUtils.smootherstep(progress, 0.7, 1)
-    const averagePulse = combinedPulse / Math.max(blocks.current.length, 1)
-    const pulseEnergy = MathUtils.clamp(
-      strongestPulse * 0.35 + averagePulse * 3.4 * 0.65,
-      0,
-      1,
-    )
-    if (coreLight.current) {
-      // Three light intensity is mutable render-loop state by design.
+    for (const batch of batches.current) {
+      // Three instance buffers are mutable render-loop state by design.
       // oxlint-disable-next-line react/immutability
-      coreLight.current.intensity = glowVisibility * (
-        lighting.coreLightBase + pulseEnergy * lighting.coreLightPulse
-      )
+      batch.instanceMatrix.needsUpdate = true
     }
-    // Shared shader uniforms are mutable render-loop state by design.
-    // oxlint-disable-next-line react/immutability
-    glow.intensity.value = glowVisibility
-      * lighting.innerGlowStrength
-      * (0.06 + pulseEnergy * 0.94)
-    // oxlint-disable-next-line react/immutability
-    glow.rimStrength.value = lighting.rimStrength
   })
 
   return (
     <group ref={rootRef} scale={0.9}>
-      <pointLight
-        ref={coreLight}
-        position={[0, 1.55, 0]}
-        color={lighting.coreColor}
-        intensity={0}
-        distance={10}
-        decay={2}
-      />
-      <primitive object={scene} />
+      <group ref={batchRoot} />
     </group>
   )
 }
@@ -325,32 +277,11 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
   const gl = useThree((state) => state.gl)
   const viewportWidth = useThree((state) => state.size.width)
   const { state } = useLoopScroll()
-  const reveal = useMemo(() => createRevealUniforms(), [])
+  const reveal = useMemo(() => createRevealUniforms(terrainRevealCellSize), [])
+  const pyramidReveal = useMemo(() => createRevealUniforms(pyramidRevealCellSize), [])
   const revealElapsed = useRef(0)
   const pyramidRoot = useRef<Group>(null)
   const terrainRoot = useRef<Group>(null)
-  const exteriorTarget = useMemo(() => {
-    const target = new Object3D()
-    target.name = 'Exterior pyramid light target'
-    target.position.set(0, 0.65, 0.65)
-    return target
-  }, [])
-  const azimuth = lighting.sunAzimuth * Math.PI / 180
-  const elevation = lighting.sunElevation * Math.PI / 180
-  const distance = 20
-  const sunPosition: [number, number, number] = [
-    Math.cos(elevation) * Math.cos(azimuth) * distance,
-    Math.sin(elevation) * distance,
-    Math.cos(elevation) * Math.sin(azimuth) * distance,
-  ]
-  const exteriorAzimuth = lighting.exteriorAzimuth * Math.PI / 180
-  const exteriorElevation = lighting.exteriorElevation * Math.PI / 180
-  const exteriorLightPosition = useMemo(() => new Vector3(
-    Math.cos(exteriorElevation) * Math.cos(exteriorAzimuth) * lighting.exteriorRadius,
-    Math.sin(exteriorElevation) * lighting.exteriorRadius,
-    0.65 + Math.cos(exteriorElevation) * Math.sin(exteriorAzimuth) * lighting.exteriorRadius,
-  ), [exteriorAzimuth, exteriorElevation, lighting.exteriorRadius])
-  const exteriorShadowSize = viewportWidth < 600 ? 512 : 1024
 
   useEffect(() => {
     // Three renderer configuration is mutable by design and only changes on input.
@@ -363,6 +294,11 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
     pyramidRoot.current.updateWorldMatrix(true, true)
     terrainRoot.current.updateWorldMatrix(true, true)
     const pyramidBounds = new Box3().setFromObject(pyramidRoot.current)
+    // An empty Box3 carries min=+Infinity/max=-Infinity, so a midpoint works out
+    // to NaN. NaN then silently poisons the reveal shader: comparisons against it
+    // are always false, so nothing discards and the edge glow saturates the whole
+    // scene instead of erroring anywhere visible.
+    if (pyramidBounds.isEmpty()) return
     const sceneBounds = new Box3().setFromObject(terrainRoot.current).union(pyramidBounds)
     reveal.origin.value.set(
       (pyramidBounds.min.x + pyramidBounds.max.x) / 2,
@@ -382,7 +318,26 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
     // Shared shader uniforms are updated without triggering React renders.
     // oxlint-disable-next-line react/immutability
     reveal.distance.value = maximumDistance * 1.02
-  }, [reveal])
+
+    // The pyramid is sized against its own bounds rather than the desert's, so
+    // its front sweeps 7 units over its own window instead of crawling through
+    // the first 1.3% of a 522-unit radius.
+    // oxlint-disable-next-line react/immutability
+    pyramidReveal.origin.value.copy(reveal.origin.value)
+    const origin = reveal.origin.value
+    const pyramidReach = Math.max(
+      Math.abs(pyramidBounds.min.x - origin.x),
+      Math.abs(pyramidBounds.max.x - origin.x),
+      Math.abs(pyramidBounds.min.z - origin.z),
+      Math.abs(pyramidBounds.max.z - origin.z),
+    )
+    // Mirrors the shader's own shaping: Chebyshev reach, plus the depth
+    // weighting, plus headroom for the per-cell jitter riding on top.
+    // oxlint-disable-next-line react/immutability
+    pyramidReveal.distance.value = pyramidReach
+      + (origin.y - pyramidBounds.min.y) * revealDepthWeight
+      + pyramidRevealCellSize * 1.5
+  }, [reveal, pyramidReveal])
 
   useFrame((_, delta) => {
     const current = state.current
@@ -395,46 +350,58 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
     reveal.timeline.value = timeline
     // oxlint-disable-next-line react/immutability
     reveal.progress.value = Math.pow(revealTime, 2.8)
+
+    // Same timeline so the block outlines still fade in step with the sand,
+    // but its own progress curve over its own radius.
+    // oxlint-disable-next-line react/immutability
+    pyramidReveal.timeline.value = timeline
+    const pyramidTime = MathUtils.clamp(
+      (timeline - pyramidRevealStart) / (pyramidRevealEnd - pyramidRevealStart),
+      0,
+      1,
+    )
+    // oxlint-disable-next-line react/immutability
+    pyramidReveal.progress.value = Math.pow(pyramidTime, pyramidRevealEase)
   })
 
   return (
     <>
       <color attach="background" args={[lighting.background]} />
-      <fog attach="fog" args={[lighting.fogColor, lighting.fogNear, lighting.fogFar]} />
+      <fogExp2 attach="fog" args={[lighting.fogColor, lighting.fogDensity]} />
       <ambientLight color={lighting.ambientColor} intensity={lighting.ambientIntensity} />
-      <directionalLight
-        position={sunPosition}
-        intensity={lighting.sunIntensity}
-        color={lighting.sunColor}
-        castShadow={false}
+      <hemisphereLight
+        color={lighting.skyColor}
+        groundColor={lighting.groundColor}
+        intensity={lighting.hemisphereIntensity}
       />
-      <primitive object={exteriorTarget} />
-      <spotLight
-        name="Exterior pyramid key light"
-        position={exteriorLightPosition}
-        target={exteriorTarget}
-        color={lighting.exteriorColor}
-        intensity={lighting.exteriorIntensity}
-        angle={lighting.exteriorAngle}
-        penumbra={lighting.exteriorPenumbra}
-        distance={lighting.exteriorDistance}
-        decay={2}
-        castShadow={lighting.shadows}
-        shadow-mapSize-width={exteriorShadowSize}
-        shadow-mapSize-height={exteriorShadowSize}
-        shadow-camera-near={2}
-        shadow-camera-far={lighting.exteriorDistance}
-        shadow-bias={-0.0002}
-        shadow-normalBias={0.035}
+      <directionalLight
+        name="Desert sun"
+        color={lighting.sunColor}
+        intensity={lighting.sunIntensity}
+        position={[
+          lighting.sunPositionX,
+          lighting.sunPositionY,
+          lighting.sunPositionZ,
+        ]}
+        castShadow
+        shadow-mapSize-width={viewportWidth < 600 ? 1024 : 2048}
+        shadow-mapSize-height={viewportWidth < 600 ? 1024 : 2048}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={18}
+        shadow-camera-bottom={-18}
+        shadow-camera-near={1}
+        shadow-camera-far={80}
+        shadow-bias={-0.00015}
+        shadow-normalBias={0.055}
+        shadow-radius={2}
       />
       <Terrain reveal={reveal} rootRef={terrainRoot} />
-      <SandWind reveal={reveal} />
       <group name="landmarks" position={[0, 0.05, 0.65]}>
         <Pyramid
-          reveal={reveal}
+          reveal={pyramidReveal}
           rootRef={pyramidRoot}
           lighting={lighting}
-          exteriorLightPosition={exteriorLightPosition}
         />
       </group>
     </>
