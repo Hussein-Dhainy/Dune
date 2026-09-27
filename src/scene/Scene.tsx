@@ -1,15 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { useGLTF } from '@react-three/drei'
+import { useGLTF, useTexture } from '@react-three/drei'
 import {
   Box3,
   InstancedMesh,
   MathUtils,
   Matrix4,
+  NoColorSpace,
   Quaternion,
+  RepeatWrapping,
+  SRGBColorSpace,
   Vector3,
 } from 'three'
-import type { BufferGeometry, Group, Material, Mesh } from 'three'
+import type { BufferGeometry, Group, Material, Mesh, MeshStandardMaterial } from 'three'
 import type { LightingSettings } from './lighting'
 import { applyRevealShader, createRevealUniforms, revealDepthWeight } from './reveal'
 import type { RevealUniforms } from './reveal'
@@ -18,7 +21,12 @@ import { usePyramidMaterial } from './pyramidMaterial'
 import { applyEdgeShader, buildEdgeGeometry, createEdgeUniforms } from './pyramidEdges'
 
 const pyramidModelUrl = '/models/pyramid.glb?v=non-beveled-untextured-1'
-const terrainModelUrl = '/models/desert-terrain.glb?v=groundsand-1'
+const terrainModelUrl = '/models/desert-terrain.glb?v=webref-geometry-2'
+const terrainTextureUrls = [
+  '/textures/sand-basecolor.jpg',
+  '/textures/sand-normal.jpg',
+  '/textures/sand-roughness.jpg',
+]
 const revealDuration = 10
 // The desert measures ~522 world units from the reveal origin to its far
 // corner; the pyramid measures ~4.7. One shared cell size cannot serve both -
@@ -261,15 +269,38 @@ function Pyramid({ reveal, rootRef, lighting }: {
 
 function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.RefObject<Group | null> }) {
   const { scene } = useGLTF(terrainModelUrl)
+  const [baseColorMap, normalMap, roughnessMap] = useTexture(terrainTextureUrls)
   useEffect(() => {
-    const materials = prepareRevealMaterials(scene, reveal)
+    // Loaded textures are configured once for this material pipeline.
+    // oxlint-disable-next-line react/immutability
+    baseColorMap.colorSpace = SRGBColorSpace
+    // oxlint-disable-next-line react/immutability
+    normalMap.colorSpace = NoColorSpace
+    // oxlint-disable-next-line react/immutability
+    roughnessMap.colorSpace = NoColorSpace
+    for (const texture of [baseColorMap, normalMap, roughnessMap]) {
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      texture.needsUpdate = true
+    }
+
+    const materials = prepareRevealMaterials(scene, reveal, (material) => {
+      const sand = material as MeshStandardMaterial
+      sand.map = baseColorMap
+      sand.normalMap = normalMap
+      sand.roughnessMap = roughnessMap
+      sand.roughness = 1
+      sand.metalness = 0
+      sand.normalScale.set(0.55, 0.55)
+      sand.needsUpdate = true
+    })
     scene.traverse((object) => {
       if ('isMesh' in object) (object as Mesh).receiveShadow = true
     })
     return () => {
       for (const material of materials) material.dispose()
     }
-  }, [scene, reveal])
+  }, [scene, reveal, baseColorMap, normalMap, roughnessMap])
   return <group ref={rootRef}><primitive object={scene} /></group>
 }
 
@@ -410,3 +441,4 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
 
 useGLTF.preload(pyramidModelUrl)
 useGLTF.preload(terrainModelUrl)
+useTexture.preload(terrainTextureUrls)
