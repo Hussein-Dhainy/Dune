@@ -1,7 +1,5 @@
 export type LightingSettings = {
   background: string
-  fogColor: string
-  fogDensity: number
   ambientColor: string
   ambientIntensity: number
   sunColor: string
@@ -19,8 +17,6 @@ export type LightingSettings = {
 
 export const defaultLighting: LightingSettings = {
   background: '#c2a78e',
-  fogColor: '#bda087',
-  fogDensity: 0.0034,
   ambientColor: '#ded1c3',
   ambientIntensity: 0.06,
   sunColor: '#ffe1b8',

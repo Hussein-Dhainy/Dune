@@ -28,6 +28,8 @@ const terrainTextureUrls = [
   '/textures/sand-roughness.jpg',
 ]
 const revealDuration = 10
+const terrainRevealStart = 0.04
+const terrainRevealEnd = 0.6
 // The desert measures ~522 world units from the reveal origin to its far
 // corner; the pyramid measures ~4.7. One shared cell size cannot serve both -
 // at the terrain's 1.35 the pyramid is spanned by only four cells and so
@@ -40,9 +42,32 @@ const pyramidRevealCellSize = 0.3
 const pyramidRevealStart = 0.04
 const pyramidRevealEnd = 0.26
 const pyramidRevealEase = 1.2
-const pyramidPulsePeriod = 5.6
-const pyramidPulseDuration = 1.9
-const pyramidPulseTravel = 2.35
+const terrainProgressAtPyramidReveal = Math.pow(
+  (pyramidRevealEnd - terrainRevealStart) / (1 - terrainRevealStart),
+  2.8,
+)
+const pyramidPulsePeriod = 11.4
+// Heartbeat rhythm: a "lub-dub" pair, a short pause, then one slower, softer
+// beat before the loop repeats. Times are seconds into the period.
+const pyramidHeartbeat = [
+  { start: 0, duration: 2.5, strength: 1 },
+  { start: 2.5, duration: 2, strength: 0.75 },
+  { start: 5.5, duration: 2.2, strength: 0.6 },
+] as const
+// Seconds for a beat to sweep from the pyramid's screen-left edge to its right.
+const pyramidPulseTravel = 2.4
+
+function heartbeatAt(phase: number) {
+  let pulse = 0
+  for (const beat of pyramidHeartbeat) {
+    const t = phase - beat.start
+    if (t > 0 && t < beat.duration) {
+      pulse = Math.max(pulse, Math.sin(Math.PI * t / beat.duration) ** 2 * beat.strength)
+    }
+  }
+  return pulse
+}
+const pyramidRotationY = MathUtils.degToRad(45)
 
 // Scratch objects for the per-frame instance matrix rebuild, hoisted so the
 // pulse loop allocates nothing.
@@ -130,7 +155,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
     })
 
     // Bounds measured in the same space as the block matrices, so the height
-    // ratio driving the pulse delay is consistent.
+    // ratio driving the pulse distance is consistent.
     const pyramidBounds = new Box3()
     for (const group of byGeometry.values()) {
       for (const { mesh, matrix } of group) {
@@ -146,6 +171,11 @@ function Pyramid({ reveal, rootRef, lighting }: {
     const material = pyramidMaterial.clone()
     applyRevealShader(material, reveal)
     applyEdgeShader(material, edges)
+
+    // The beat sweeps across the screen, so blocks are ordered by world X (the
+    // camera looks down -Z) rather than by their rotated local position.
+    root.updateWorldMatrix(true, false)
+    const blockWorldX: number[] = []
 
     const animatedBlocks: AnimatedPyramidBlock[] = []
     const createdBatches: InstancedMesh[] = []
@@ -183,6 +213,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
           0.45 + height * 1.35,
           blockCenter.z - pyramidCenter.z,
         ).normalize()
+        blockWorldX.push(blockCenter.clone().applyMatrix4(root.matrixWorld).x)
 
         animatedBlocks.push({
           batch,
@@ -191,8 +222,8 @@ function Pyramid({ reveal, rootRef, lighting }: {
           quaternion,
           scale,
           direction,
-          delay: (1 - height) * pyramidPulseTravel,
-          distance: MathUtils.lerp(0.42, 0.78, height),
+          delay: 0,
+          distance: MathUtils.lerp(0.735, 1.365, height),
           height,
         })
       }
@@ -201,6 +232,12 @@ function Pyramid({ reveal, rootRef, lighting }: {
       // scene's reveal radius is derived from it.
       batch.computeBoundingBox()
       batch.computeBoundingSphere()
+    }
+
+    const minX = Math.min(...blockWorldX)
+    const spanX = Math.max(Math.max(...blockWorldX) - minX, 0.0001)
+    for (const [index, block] of animatedBlocks.entries()) {
+      block.delay = (blockWorldX[index] - minX) / spanX * pyramidPulseTravel
     }
 
     blocks.current = animatedBlocks
@@ -219,17 +256,19 @@ function Pyramid({ reveal, rootRef, lighting }: {
   }, [scene, reveal, pyramidMaterial, edges])
 
   useFrame((_, delta) => {
-    const progress = reveal.timeline.value
-    const fadeIn = MathUtils.smoothstep(progress, 0, 0.12)
-    const fadeOut = 1 - MathUtils.smoothstep(progress, 0.72, 1)
-    // One shared uniform now, instead of one material per block.
-    // Shared shader uniforms are mutable render-loop state by design.
+    const pyramidProgress = reveal.progress.value
+    // The construction front leads the solid surface and disappears as the
+    // pyramid finishes revealing. These uniforms update without React renders.
     // oxlint-disable-next-line react/immutability
-    edges.opacity.value = Math.min(fadeIn, fadeOut)
+    edges.build.value = Math.min(1, pyramidProgress * 1.5 + 0.05)
+    // oxlint-disable-next-line react/immutability
+    edges.opacity.value = 1 - MathUtils.smoothstep(pyramidProgress, 0.7, 0.99)
+    if (!state.current.reducedMotion && edges.opacity.value > 0) {
+      // oxlint-disable-next-line react/immutability
+      edges.time.value += Math.min(delta, 0.1)
+    }
 
-    const motionVisibility = state.current.reducedMotion
-      ? 0
-      : MathUtils.smootherstep(progress, 0.82, 1)
+    const motionVisibility = !state.current.reducedMotion && pyramidProgress >= 0.999 ? 1 : 0
     if (motionVisibility > 0) pulseElapsed.current += Math.min(delta, 0.1)
 
     for (const block of blocks.current) {
@@ -237,9 +276,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
         pulseElapsed.current - block.delay,
         pyramidPulsePeriod,
       )
-      const activePulse = phase < pyramidPulseDuration
-        ? Math.sin(Math.PI * phase / pyramidPulseDuration) ** 2 * motionVisibility
-        : 0
+      const activePulse = heartbeatAt(phase) * motionVisibility
       const layerInfluence = MathUtils.smootherstep(block.height, 0.08, 0.55)
       const movementScale = MathUtils.lerp(lighting.baseMovement, 1, layerInfluence)
 
@@ -261,7 +298,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
   })
 
   return (
-    <group ref={rootRef} scale={0.9}>
+    <group ref={rootRef} scale={0.9} rotation-y={pyramidRotationY}>
       <group ref={batchRoot} />
     </group>
   )
@@ -301,7 +338,11 @@ function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.R
       for (const material of materials) material.dispose()
     }
   }, [scene, reveal, baseColorMap, normalMap, roughnessMap])
-  return <group ref={rootRef}><primitive object={scene} /></group>
+  return (
+    <group ref={rootRef}>
+      <primitive object={scene} />
+    </group>
+  )
 }
 
 export function Scene({ lighting }: { lighting: LightingSettings }) {
@@ -375,12 +416,29 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
     if (current.phase === 'loading') return
     if (!current.reducedMotion) revealElapsed.current += Math.min(delta, 0.1)
     const timeline = current.reducedMotion ? 1 : Math.min(revealElapsed.current / revealDuration, 1)
-    const revealTime = MathUtils.clamp((timeline - 0.04) / 0.96, 0, 1)
+    const revealTime = MathUtils.clamp(
+      (timeline - terrainRevealStart) / (1 - terrainRevealStart),
+      0,
+      1,
+    )
+    // Keep the original pacing through the pyramid reveal, then sweep across
+    // the entire desert in the next 3.4 seconds instead of taking the full 10.
+    const terrainProgress = timeline <= pyramidRevealEnd
+      ? Math.pow(revealTime, 2.8)
+      : MathUtils.lerp(
+        terrainProgressAtPyramidReveal,
+        1,
+        MathUtils.clamp(
+          (timeline - pyramidRevealEnd) / (terrainRevealEnd - pyramidRevealEnd),
+          0,
+          1,
+        ),
+      )
     // Shared shader uniforms are updated without triggering React renders.
     // oxlint-disable-next-line react/immutability
     reveal.timeline.value = timeline
     // oxlint-disable-next-line react/immutability
-    reveal.progress.value = Math.pow(revealTime, 2.8)
+    reveal.progress.value = terrainProgress
 
     // Same timeline so the block outlines still fade in step with the sand,
     // but its own progress curve over its own radius.
@@ -398,7 +456,6 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
   return (
     <>
       <color attach="background" args={[lighting.background]} />
-      <fogExp2 attach="fog" args={[lighting.fogColor, lighting.fogDensity]} />
       <ambientLight color={lighting.ambientColor} intensity={lighting.ambientIntensity} />
       <hemisphereLight
         color={lighting.skyColor}
@@ -428,7 +485,7 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
         shadow-radius={2}
       />
       <Terrain reveal={reveal} rootRef={terrainRoot} />
-      <group name="landmarks" position={[0, 0.05, 0.65]}>
+      <group name="landmarks" position={[0, -0.05, 0.65]}>
         <Pyramid
           reveal={pyramidReveal}
           rootRef={pyramidRoot}

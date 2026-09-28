@@ -41,8 +41,6 @@ export function LightingDebug({ lighting, setLighting }: Props) {
       <div className="debug-color-grid">
         <label>Background <input type="color" value={lighting.background}
           onChange={(event) => update('background', event.currentTarget.value)} /></label>
-        <label>Fog <input type="color" value={lighting.fogColor}
-          onChange={(event) => update('fogColor', event.currentTarget.value)} /></label>
         <label>Ambient <input type="color" value={lighting.ambientColor}
           onChange={(event) => update('ambientColor', event.currentTarget.value)} /></label>
         <label>Sun <input type="color" value={lighting.sunColor}
@@ -66,8 +64,6 @@ export function LightingDebug({ lighting, setLighting }: Props) {
         onChange={(value) => update('hemisphereIntensity', value)} />
       <Slider label="Exposure" value={lighting.exposure} min={0.25} max={2} step={0.05}
         onChange={(value) => update('exposure', value)} />
-      <Slider label="Fog density" value={lighting.fogDensity} min={0} max={0.03} step={0.0002}
-        onChange={(value) => update('fogDensity', value)} />
       <Slider label="Base movement" value={lighting.baseMovement} min={0} max={1} step={0.01}
         onChange={(value) => update('baseMovement', value)} />
       <div className="debug-actions">

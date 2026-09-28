@@ -3,6 +3,8 @@ import type { BufferGeometry, Material } from 'three'
 
 export type EdgeUniforms = {
   opacity: { value: number }
+  build: { value: number }
+  time: { value: number }
   color: { value: Color }
   /** Line thickness in pixels, applied against the screen-space derivative. */
   width: { value: number }
@@ -11,6 +13,8 @@ export type EdgeUniforms = {
 export function createEdgeUniforms(): EdgeUniforms {
   return {
     opacity: { value: 0 },
+    build: { value: 0 },
+    time: { value: 0 },
     color: { value: new Color('#e7b56f') },
     width: { value: 1.3 },
   }
@@ -128,6 +132,8 @@ export function applyEdgeShader(material: Material, edges: EdgeUniforms) {
   material.onBeforeCompile = (shader, renderer) => {
     compileBaseMaterial.call(material, shader, renderer)
     shader.uniforms.uEdgeOpacity = edges.opacity
+    shader.uniforms.uEdgeBuild = edges.build
+    shader.uniforms.uEdgeTime = edges.time
     shader.uniforms.uEdgeColor = edges.color
     shader.uniforms.uEdgeWidth = edges.width
 
@@ -147,6 +153,8 @@ void main() {
       .replace(
         'void main() {',
         `uniform float uEdgeOpacity;
+uniform float uEdgeBuild;
+uniform float uEdgeTime;
 uniform vec3 uEdgeColor;
 uniform float uEdgeWidth;
 varying vec3 vEdgeBary;
@@ -154,23 +162,40 @@ varying vec3 vEdgeMask;
 void main() {`,
       )
       .replace(
+        'bool revealActive = uRevealProgress <= 0.999;',
+        `float edgeVisibility = 0.0;
+  float buildPosition = 0.0;
+  bool revealActive = uRevealProgress <= 0.999;`,
+      )
+      .replace(
+        'if (revealOffset > 0.0) discard;',
+        `// Let an expanding outline lead the solid reveal. Only hard-edge pixels
+  // survive outside the revealed surface, so no second mesh is needed.
+  vec3 maskedBary = vEdgeBary + (1.0 - vEdgeMask) * 10.0;
+  float edgeDistance = min(min(maskedBary.x, maskedBary.y), maskedBary.z);
+  float edgeFalloff = fwidth(edgeDistance) * uEdgeWidth;
+  float edgeStrength = 1.0 - smoothstep(0.0, edgeFalloff, edgeDistance);
+  vec3 buildDelta = vRevealWorldPosition - uRevealOrigin;
+  float buildDistance = max(abs(buildDelta.x), abs(buildDelta.z))
+    + max(-buildDelta.y, 0.0) * 0.34;
+  buildPosition = buildDistance / max(uRevealDistance, 0.0001);
+  float edgeBuilt = 1.0 - smoothstep(uEdgeBuild - 0.035, uEdgeBuild + 0.035, buildPosition);
+  edgeVisibility = edgeStrength * edgeBuilt * uEdgeOpacity;
+  if (revealOffset > 0.0 && edgeVisibility < 0.01) discard;`,
+      )
+      .replace(
         '#include <dithering_fragment>',
-        `// uEdgeOpacity is a per-draw uniform, so this branch is dynamically uniform
-  // and costs nothing once the outlines have faded out.
+        `// Shimmer peaks on the moving construction front, then settles behind it.
   if (uEdgeOpacity > 0.001) {
-    // Pushing soft edges far out of range leaves only the masked-in hard edges
-    // close enough to the fragment to light up.
-    vec3 maskedBary = vEdgeBary + (1.0 - vEdgeMask) * 10.0;
-    float edgeDistance = min(min(maskedBary.x, maskedBary.y), maskedBary.z);
-    // Scaling by the screen-space derivative keeps the outline a constant
-    // pixel width regardless of how close the camera is to the block.
-    float edgeFalloff = fwidth(edgeDistance) * uEdgeWidth;
-    float edgeStrength = 1.0 - smoothstep(0.0, edgeFalloff, edgeDistance);
-    gl_FragColor.rgb += uEdgeColor * edgeStrength * uEdgeOpacity;
+    float frontGlow = 1.0 - smoothstep(0.0, 0.16, abs(buildPosition - uEdgeBuild));
+    float shimmer = 0.5 + 0.5 * sin(uEdgeTime * 19.0
+      + dot(vRevealWorldPosition.xz, vec2(11.0, 7.0)) + vRevealWorldPosition.y * 4.0);
+    float brightness = 0.7 + frontGlow * (0.5 + shimmer * 0.8);
+    gl_FragColor.rgb += uEdgeColor * edgeVisibility * brightness;
   }
   #include <dithering_fragment>`,
       )
   }
-  material.customProgramCacheKey = () => `${baseCacheKey()}-pyramid-edges-v1`
+  material.customProgramCacheKey = () => `${baseCacheKey()}-pyramid-edges-v2`
   material.needsUpdate = true
 }
