@@ -1,5 +1,5 @@
 import { sampleCycle } from './cycle.ts'
-import { MathUtils } from 'three'
+import { MathUtils, Vector3 } from 'three'
 
 type Point = readonly [number, number, number]
 export type CameraPose = { position: Point; target: Point }
@@ -29,4 +29,55 @@ export function mixPose(a: CameraPose, b: CameraPose, progress: number): CameraP
 export function sampleCamera(position: number): CameraPose {
   const { index, nextIndex, transition } = sampleCycle(position)
   return mixPose(cameraPoses[index], cameraPoses[nextIndex], transition)
+}
+
+/**
+ * Mouse-driven look-around: the whole camera rig swings about a pivot set
+ * behind the target, so the pyramid (nearer than the pivot) and the far dunes
+ * (beyond it) drift in opposite directions.
+ */
+export const pointerOrbit = {
+  /** Yaw at the window's left/right edge. */
+  maxYaw: MathUtils.degToRad(5),
+  /** Pitch at the window's top/bottom edge. Narrower than yaw: the camera
+   *  sits low over the sand, and a steep swing reads as tilting the world. */
+  maxPitch: MathUtils.degToRad(3),
+  /** How far past the look-at target, along the horizontal view direction, the pivot sits. */
+  pivotBehindTarget: 8,
+  /** Easing rate towards the pointer, so the camera floats rather than snaps. */
+  ease: 3,
+}
+
+const orbitPivot = new Vector3()
+const orbitRight = new Vector3()
+const orbitUp = new Vector3(0, 1, 0)
+const orbitPoint = new Vector3()
+
+/** Rotates a pose's position and target together about the pivot: `pitch`
+ *  radians about the camera's horizontal right axis (positive raises the
+ *  camera), then `yaw` about the vertical (positive swings it to its right). */
+export function orbitPose(
+  pose: CameraPose,
+  yaw: number,
+  pitch = 0,
+  pivotBehindTarget = pointerOrbit.pivotBehindTarget,
+): CameraPose {
+  if (yaw === 0 && pitch === 0) return pose
+  const viewX = pose.target[0] - pose.position[0]
+  const viewZ = pose.target[2] - pose.position[2]
+  const viewLength = Math.hypot(viewX, viewZ) || 1
+  orbitPivot.set(
+    pose.target[0] + (viewX / viewLength) * pivotBehindTarget,
+    pose.target[1],
+    pose.target[2] + (viewZ / viewLength) * pivotBehindTarget,
+  )
+  orbitRight.set(-viewZ / viewLength, 0, viewX / viewLength)
+  const rotate = (point: Point): Point => {
+    orbitPoint.set(...point).sub(orbitPivot)
+    // Right-handed rotation about the right axis lowers a point in front of
+    // the pivot, so pitch is negated to make positive raise the camera.
+    orbitPoint.applyAxisAngle(orbitRight, -pitch).applyAxisAngle(orbitUp, yaw).add(orbitPivot)
+    return [orbitPoint.x, orbitPoint.y, orbitPoint.z]
+  }
+  return { position: rotate(pose.position), target: rotate(pose.target) }
 }

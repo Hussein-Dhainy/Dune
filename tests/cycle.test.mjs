@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cycleLength, nearestSectionPosition, sampleCycle, sectionStart, sections, smoothPosition, wrap } from '../src/experience/cycle.ts'
-import { cameraPoses, mixPose, introPose, sampleCamera } from '../src/experience/cameraPath.ts'
+import { cameraPoses, mixPose, introPose, orbitPose, pointerOrbit, sampleCamera } from '../src/experience/cameraPath.ts'
 
 test('progress repeats in both directions, including exact boundaries', () => {
   for (const position of [-600.1, -6, -0.1, 0, 1, 2, 5.99, 6, 600.1]) {
@@ -49,4 +49,39 @@ test('debug navigation selects the nearest occurrence without losing the loop co
   assert.equal(nearestSectionPosition(600.2, 0), 600)
   assert.equal(nearestSectionPosition(-600.2, 0), -600)
   assert.ok(Math.abs(nearestSectionPosition(2, 0, sections[0].hold) - 1.2) < 1e-12)
+})
+
+test('pointer orbit swings the rig about a pivot behind the target', () => {
+  const pose = cameraPoses[0]
+  assert.deepEqual(orbitPose(pose, 0), pose)
+
+  const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const swung = orbitPose(pose, pointerOrbit.maxYaw)
+  // A rigid rotation: camera-to-target distance and heights are unchanged.
+  assert.ok(Math.abs(distance(swung.position, swung.target) - distance(pose.position, pose.target)) < 1e-9)
+  assert.equal(swung.position[1], pose.position[1])
+  assert.equal(swung.target[1], pose.target[1])
+
+  // Positive yaw moves the camera to its right.
+  const right = [-(pose.target[2] - pose.position[2]), 0, pose.target[0] - pose.position[0]]
+  const moved = swung.position.map((value, axis) => value - pose.position[axis])
+  assert.ok(moved[0] * right[0] + moved[2] * right[2] > 0)
+
+  // The pivot sits behind the target, so the target itself moves too, less than the camera.
+  const targetShift = distance(swung.target, pose.target)
+  assert.ok(targetShift > 0 && targetShift < distance(swung.position, pose.position))
+})
+
+test('pointer orbit pitch raises the camera rigidly about the same pivot', () => {
+  const pose = cameraPoses[0]
+  const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const raised = orbitPose(pose, 0, pointerOrbit.maxPitch)
+  const lowered = orbitPose(pose, 0, -pointerOrbit.maxPitch)
+  assert.ok(raised.position[1] > pose.position[1])
+  assert.ok(lowered.position[1] < pose.position[1])
+  assert.ok(Math.abs(distance(raised.position, raised.target) - distance(pose.position, pose.target)) < 1e-9)
+  // Pitch alone stays in the camera's vertical plane: no sideways drift.
+  const right = [-(pose.target[2] - pose.position[2]), 0, pose.target[0] - pose.position[0]]
+  const moved = raised.position.map((value, axis) => value - pose.position[axis])
+  assert.ok(Math.abs(moved[0] * right[0] + moved[2] * right[2]) < 1e-9)
 })

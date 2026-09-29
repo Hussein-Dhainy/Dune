@@ -2,95 +2,128 @@ import { Color, Vector3 } from 'three'
 import type { Material } from 'three'
 
 export type PyramidGlowUniforms = {
-  origin: { value: Vector3 }
+  /** World-space position of the hidden light source inside the pyramid. */
+  core: { value: Vector3 }
   color: { value: Color }
-  intensity: { value: number }
-  rimStrength: { value: number }
-  exteriorPosition: { value: Vector3 }
-  exteriorColor: { value: Color }
-  exteriorRimStrength: { value: number }
+  /** 0 until the pyramid has finished revealing, so the glow takes over from the construction outline. */
+  visibility: { value: number }
+  seamIntensity: { value: number }
+  /** Seam line thickness in pixels, applied against the screen-space derivative. */
+  seamWidth: { value: number }
+  coreIntensity: { value: number }
+  /** How much a block's pulse offset multiplies the light escaping around it. */
+  pulseBoost: { value: number }
 }
 
 export function createPyramidGlowUniforms(): PyramidGlowUniforms {
   return {
-    origin: { value: new Vector3() },
-    color: { value: new Color('#ffc46b') },
-    intensity: { value: 0 },
-    rimStrength: { value: 0.12 },
-    exteriorPosition: { value: new Vector3(6, 11, 7) },
-    exteriorColor: { value: new Color('#ffd8a3') },
-    exteriorRimStrength: { value: 0.24 },
+    core: { value: new Vector3() },
+    color: { value: new Color('#ffffff') },
+    visibility: { value: 0 },
+    seamIntensity: { value: 1.4 },
+    seamWidth: { value: 1.1 },
+    coreIntensity: { value: 5 },
+    pulseBoost: { value: 4 },
   }
 }
 
+const patchedMaterials = new WeakSet<Material>()
+
+/**
+ * Fakes an intense light trapped inside the pyramid. Nothing is lit directly;
+ * light only shows where it could escape: along every block seam, and on the
+ * faces turned towards the core, which are hidden until the pulse pulls the
+ * blocks apart. Values run well above 1 so the bloom pass picks them up.
+ *
+ * Must be applied after applyRevealShader and applyEdgeShader, whose world
+ * position and barycentric varyings it reads. Expects a per-instance
+ * `aGlowOpen` attribute holding each block's current pulse offset (0..1).
+ */
 export function applyPyramidGlowShader(material: Material, glow: PyramidGlowUniforms) {
+  if (patchedMaterials.has(material)) return
+  patchedMaterials.add(material)
+
   const compileBaseMaterial = material.onBeforeCompile
   const baseCacheKey = material.customProgramCacheKey.bind(material)
 
   material.onBeforeCompile = (shader, renderer) => {
     compileBaseMaterial.call(material, shader, renderer)
-    shader.uniforms.uPyramidCoreOrigin = glow.origin
-    shader.uniforms.uPyramidCoreColor = glow.color
-    shader.uniforms.uPyramidGlowIntensity = glow.intensity
-    shader.uniforms.uPyramidRimStrength = glow.rimStrength
-    shader.uniforms.uPyramidExteriorPosition = glow.exteriorPosition
-    shader.uniforms.uPyramidExteriorColor = glow.exteriorColor
-    shader.uniforms.uPyramidExteriorRimStrength = glow.exteriorRimStrength
+    shader.uniforms.uGlowCore = glow.core
+    shader.uniforms.uGlowColor = glow.color
+    shader.uniforms.uGlowVisibility = glow.visibility
+    shader.uniforms.uGlowSeamIntensity = glow.seamIntensity
+    shader.uniforms.uGlowSeamWidth = glow.seamWidth
+    shader.uniforms.uGlowCoreIntensity = glow.coreIntensity
+    shader.uniforms.uGlowPulseBoost = glow.pulseBoost
+
     shader.vertexShader = shader.vertexShader
       .replace(
         'void main() {',
-        'varying vec3 vPyramidGlowWorldNormal;\nvoid main() {',
+        `attribute float aGlowOpen;
+varying float vGlowOpen;
+varying vec3 vGlowWorldNormal;
+void main() {
+  vGlowOpen = aGlowOpen;`,
       )
       .replace(
         '#include <beginnormal_vertex>',
         `#include <beginnormal_vertex>
-  vPyramidGlowWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`,
+  // Same caveat as the reveal's world position: three applies instanceMatrix
+  // to the view-space normal only, so the world normal has to add it here.
+  vec3 glowObjectNormal = objectNormal;
+  #ifdef USE_INSTANCING
+    glowObjectNormal = mat3(instanceMatrix) * glowObjectNormal;
+  #endif
+  vGlowWorldNormal = normalize(mat3(modelMatrix) * glowObjectNormal);`,
       )
+
     shader.fragmentShader = shader.fragmentShader
       .replace(
         'void main() {',
-        `uniform vec3 uPyramidCoreOrigin;
-uniform vec3 uPyramidCoreColor;
-uniform float uPyramidGlowIntensity;
-uniform float uPyramidRimStrength;
-uniform vec3 uPyramidExteriorPosition;
-uniform vec3 uPyramidExteriorColor;
-uniform float uPyramidExteriorRimStrength;
-varying vec3 vPyramidGlowWorldNormal;
+        `uniform vec3 uGlowCore;
+uniform vec3 uGlowColor;
+uniform float uGlowVisibility;
+uniform float uGlowSeamIntensity;
+uniform float uGlowSeamWidth;
+uniform float uGlowCoreIntensity;
+uniform float uGlowPulseBoost;
+varying float vGlowOpen;
+varying vec3 vGlowWorldNormal;
 void main() {`,
       )
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-  vec3 pyramidWorldNormal = normalize(vPyramidGlowWorldNormal);
-  vec3 pyramidToCore = uPyramidCoreOrigin - vRevealWorldPosition;
-  float pyramidCoreDistance = length(pyramidToCore);
-  vec3 pyramidCoreDirection = pyramidToCore / max(pyramidCoreDistance, 0.0001);
+  // Dynamically uniform, so this costs nothing until the reveal has finished.
+  if (uGlowVisibility > 0.001) {
+    float glowOpen = vGlowOpen;
+    float glowPulse = 1.0 + glowOpen * uGlowPulseBoost;
 
-  // Surfaces directed toward the core receive most of the energy. Outward
-  // faces retain their normal sandstone shading and texture.
-  float pyramidCoreFacing = smoothstep(0.02, 0.82, dot(pyramidWorldNormal, pyramidCoreDirection));
-  vec3 pyramidViewDirection = normalize(cameraPosition - vRevealWorldPosition);
-  float pyramidRim = pow(1.0 - abs(dot(pyramidWorldNormal, pyramidViewDirection)), 3.0);
-  float pyramidDistanceFade = 1.0 - smoothstep(3.0, 6.8, pyramidCoreDistance);
-  float pyramidLightShape = pyramidCoreFacing
-    + pyramidRim * uPyramidRimStrength * mix(0.18, 1.0, pyramidCoreFacing);
-  totalEmissiveRadiance += uPyramidCoreColor
-    * pyramidLightShape
-    * pyramidDistanceFade
-    * uPyramidGlowIntensity;
+    // Seams: the hard block edges, widening as the blocks part.
+    vec3 glowMaskedBary = vEdgeBary + (1.0 - vEdgeMask) * 10.0;
+    float glowEdgeDistance = min(min(glowMaskedBary.x, glowMaskedBary.y), glowMaskedBary.z);
+    float glowPixel = fwidth(glowEdgeDistance);
+    float glowSeam = 1.0 - smoothstep(0.0, glowPixel * uGlowSeamWidth * (1.0 + glowOpen), glowEdgeDistance);
+    // A wider band where escaping light washes over the face near its edge,
+    // only while the block is pulled away. Blocks are ~25px on screen, so any
+    // wider and the whole face washes out.
+    float glowHalo = 1.0 - smoothstep(0.0, glowPixel * uGlowSeamWidth * 3.0, glowEdgeDistance);
 
-  // Add a restrained rim only where the exterior key light can reach the
-  // surface. The physical spotlight remains responsible for the main shading.
-  vec3 pyramidToExterior = normalize(uPyramidExteriorPosition - vRevealWorldPosition);
-  float pyramidExteriorFacing = smoothstep(0.0, 0.42, dot(pyramidWorldNormal, pyramidToExterior));
-  float pyramidExteriorRim = pow(1.0 - abs(dot(pyramidWorldNormal, pyramidViewDirection)), 3.5);
-  totalEmissiveRadiance += uPyramidExteriorColor
-    * pyramidExteriorRim
-    * pyramidExteriorFacing
-    * uPyramidExteriorRimStrength;`,
+    // Faces turned towards the core: the inner shell and the sides of each gap.
+    vec3 glowToCore = uGlowCore - vRevealWorldPosition;
+    float glowCoreDistance = length(glowToCore);
+    float glowFacing = dot(normalize(vGlowWorldNormal), glowToCore / max(glowCoreDistance, 0.0001));
+    float glowInward = smoothstep(-0.15, 0.75, glowFacing);
+    float glowFalloff = mix(0.4, 1.0, 1.0 - smoothstep(0.5, 3.5, glowCoreDistance));
+
+    totalEmissiveRadiance += uGlowColor * uGlowVisibility * (
+      glowSeam * uGlowSeamIntensity * glowPulse
+      + glowHalo * uGlowSeamIntensity * 0.3 * glowOpen * uGlowPulseBoost
+      + glowInward * glowFalloff * uGlowCoreIntensity * (0.2 + glowOpen * uGlowPulseBoost)
+    );
+  }`,
       )
   }
-  material.customProgramCacheKey = () => `${baseCacheKey()}-pyramid-exterior-glow-v2`
+  material.customProgramCacheKey = () => `${baseCacheKey()}-pyramid-core-glow-v4`
   material.needsUpdate = true
 }

@@ -12,7 +12,7 @@ const roughnessUrl = '/textures/pyramid-roughness.jpg'
 const normalUrl = '/textures/pyramid-normal.jpg'
 
 /** Loads the pyramid's sandstone maps and builds one shared material for every
- *  block. All 146 blocks reuse 8 mesh shapes with the same 0..1 UV layout, so
+ *  block. All 113 blocks reuse 7 mesh shapes with the same 0..1 UV layout, so
  *  a single non-tiling material is correct here — no per-block randomization. */
 export function usePyramidMaterial() {
   const [basecolor, roughness, normal] = useTexture([basecolorUrl, roughnessUrl, normalUrl])

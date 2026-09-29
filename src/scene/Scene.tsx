@@ -1,14 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useGLTF, useTexture } from '@react-three/drei'
+import { Bloom, EffectComposer, SMAA, ToneMapping } from '@react-three/postprocessing'
+import { ToneMappingMode } from 'postprocessing'
 import {
   Box3,
+  DynamicDrawUsage,
+  InstancedBufferAttribute,
   InstancedMesh,
   MathUtils,
   Matrix4,
   NoColorSpace,
   Quaternion,
+  Ray,
+  Raycaster,
   RepeatWrapping,
+  Vector2,
   SRGBColorSpace,
   Vector3,
 } from 'three'
@@ -19,8 +26,11 @@ import type { RevealUniforms } from './reveal'
 import { useLoopScroll } from '../experience/useLoopScroll'
 import { usePyramidMaterial } from './pyramidMaterial'
 import { applyEdgeShader, buildEdgeGeometry, createEdgeUniforms } from './pyramidEdges'
+import { applyPyramidGlowShader, createPyramidGlowUniforms } from './pyramidGlow'
+import { createHoverMarkerOverlay } from './hoverMarkers'
+import type { HoverMarker, HoverMarkerEdge } from './hoverMarkers'
 
-const pyramidModelUrl = '/models/pyramid.glb?v=non-beveled-untextured-1'
+const pyramidModelUrl = '/models/pyramid.glb?v=no-base-course-merged-apex-1'
 const terrainModelUrl = '/models/desert-terrain.glb?v=webref-geometry-2'
 const terrainTextureUrls = [
   '/textures/sand-basecolor.jpg',
@@ -73,19 +83,79 @@ const pyramidRotationY = MathUtils.degToRad(45)
 // pulse loop allocates nothing.
 const pulseOffset = new Vector3()
 const pulseMatrix = new Matrix4()
+const hoverRaycaster = new Raycaster()
+const hoverRay = new Ray()
+const hoverHit = new Vector3()
+const hoverCandidate = new Vector3()
+const hoverInverse = new Matrix4()
+// Hovered blocks breathe in and out instead of freezing in place.
+const hoverBreathPeriod = 3.2
+// Hovered blocks swing between 1 - 2 * depth and 1 of their full lift.
+const hoverBreathDepth = 0.25
+// How far every block above the base layer travels at full pulse or hover.
+const pyramidBlockTravel = 1.365
+// Tracking markers on hovered blocks. A block gains one once clearly lifted
+// and keeps it until nearly settled, so small cursor moves never flicker them.
+const markerLimit = 5
+const markerEnterHover = 0.5
+const markerExitHover = 0.25
+// Minimum gap between marked blocks (blocks are ~1 unit), so the web spreads
+// across the lifted area instead of bunching up under the cursor.
+const markerSpacing = 1.9
+const markerPoint = new Vector3()
+const markerSize = new Vector3()
+const markerCamera = new Vector3()
 
 type AnimatedPyramidBlock = {
   /** Which instanced batch this block lives in, and its slot inside it. */
   batch: InstancedMesh
   index: number
+  /** Per-instance pulse offset read by the glow shader, so light escapes where blocks part. */
+  glowOpen: InstancedBufferAttribute
   /** Resting transform, recomposed with the pulse offset every frame. */
   position: Vector3
   quaternion: Quaternion
   scale: Vector3
   direction: Vector3
+  /** Resting bounds and centre in the batch root's space, for the hover hit test. */
+  restingBox: Box3
+  restingCenter: Vector3
+  /** Eased 0..1 hover amount, so blocks glide out and back rather than snap. */
+  hover: number
   delay: number
-  distance: number
-  height: number
+  /** The bottom course stays planted, scaled down by lighting.baseMovement. */
+  isBase: boolean
+  /** Current pulse/hover offset, 0..1 of pyramidBlockTravel. */
+  offset: number
+  /** Hover as actually seen on screen, so near-still base blocks never get a marker. */
+  visibleHover: number
+}
+
+/** Live two-digit readout of how far a block is extended: 00 at rest, 99 at
+ *  full travel, so it rises and falls with the breathing and the heartbeat. */
+function extensionLabel(offset: number) {
+  return String(Math.round(MathUtils.clamp(offset, 0, 1) * 99)).padStart(2, '0')
+}
+
+/** Joins each marked block to its two nearest marked neighbours in 3D, which
+ *  gives small chains and triangles rather than every-to-every clutter. */
+function connectMarkers(marked: readonly AnimatedPyramidBlock[]) {
+  const edges: HoverMarkerEdge[] = []
+  const seen = new Set<string>()
+  for (const [from, block] of marked.entries()) {
+    const nearest = marked
+      .map((other, to) => ({ to, distance: block.restingCenter.distanceTo(other.restingCenter) }))
+      .filter(({ to }) => to !== from)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 2)
+    for (const { to } of nearest) {
+      const key = from < to ? `${from}-${to}` : `${to}-${from}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      edges.push([from, to])
+    }
+  }
+  return edges
 }
 
 function prepareRevealMaterials(
@@ -122,10 +192,62 @@ function Pyramid({ reveal, rootRef, lighting }: {
   const { state } = useLoopScroll()
   const pyramidMaterial = usePyramidMaterial()
   const edges = useMemo(() => createEdgeUniforms(), [])
+  const glow = useMemo(() => createPyramidGlowUniforms(), [])
   const blocks = useRef<AnimatedPyramidBlock[]>([])
   const batches = useRef<InstancedMesh[]>([])
   const batchRoot = useRef<Group>(null)
   const pulseElapsed = useRef(0)
+  const camera = useThree((root) => root.camera)
+  const gl = useThree((root) => root.gl)
+  // Screen position of a hovering mouse in normalized device coordinates, or
+  // null. Tracked on the window because the scroll layer sits over the canvas
+  // and swallows R3F's own pointer events.
+  const hoverPointer = useRef<Vector2 | null>(null)
+  const markerOverlay = useRef<ReturnType<typeof createHoverMarkerOverlay> | null>(null)
+  const markedBlocks = useRef<AnimatedPyramidBlock[]>([])
+  const markerEdges = useRef<HoverMarkerEdge[]>([])
+  const markers = useRef<HoverMarker[]>([])
+
+  useEffect(() => {
+    const container = gl.domElement.parentElement
+    if (!container) return
+    const overlay = createHoverMarkerOverlay(container, markerLimit)
+    markerOverlay.current = overlay
+    return () => {
+      overlay.dispose()
+      markerOverlay.current = null
+    }
+  }, [gl])
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      // Touch drags are scrolling, not hovering.
+      if (event.pointerType !== 'mouse') return
+      const rect = gl.domElement.getBoundingClientRect()
+      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+      if (Math.abs(x) > 1 || Math.abs(y) > 1) {
+        hoverPointer.current = null
+        return
+      }
+      hoverPointer.current ??= new Vector2()
+      hoverPointer.current.set(x, y)
+    }
+    const leave = (event: MouseEvent) => {
+      if (!event.relatedTarget) hoverPointer.current = null
+    }
+    const clear = () => {
+      hoverPointer.current = null
+    }
+    window.addEventListener('pointermove', move)
+    document.addEventListener('mouseout', leave)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      document.removeEventListener('mouseout', leave)
+      window.removeEventListener('blur', clear)
+    }
+  }, [gl])
 
   // Layout effect, not a passive one: the parent measures this group's bounds
   // in its own layout effect to size the reveal, and child layout effects run
@@ -142,8 +264,8 @@ function Pyramid({ reveal, rootRef, lighting }: {
     scene.updateMatrixWorld(true)
     const inverseScene = new Matrix4().copy(scene.matrixWorld).invert()
 
-    // The 146 blocks reuse only 8 geometries, so one instanced batch per
-    // geometry collapses 146 draw calls into 8.
+    // The 113 blocks reuse only 7 geometries, so one instanced batch per
+    // geometry collapses 113 draw calls into 7.
     const byGeometry = new Map<BufferGeometry, { mesh: Mesh; matrix: Matrix4 }[]>()
     scene.traverse((object) => {
       if (!('isMesh' in object)) return
@@ -155,7 +277,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
     })
 
     // Bounds measured in the same space as the block matrices, so the height
-    // ratio driving the pulse distance is consistent.
+    // ratio tilting each block's pulse direction is consistent.
     const pyramidBounds = new Box3()
     for (const group of byGeometry.values()) {
       for (const { mesh, matrix } of group) {
@@ -171,11 +293,14 @@ function Pyramid({ reveal, rootRef, lighting }: {
     const material = pyramidMaterial.clone()
     applyRevealShader(material, reveal)
     applyEdgeShader(material, edges)
+    applyPyramidGlowShader(material, glow)
 
     // The beat sweeps across the screen, so blocks are ordered by world X (the
     // camera looks down -Z) rather than by their rotated local position.
     root.updateWorldMatrix(true, false)
     const blockWorldX: number[] = []
+    // oxlint-disable-next-line react/immutability
+    glow.core.value.copy(pyramidCenter).applyMatrix4(root.matrixWorld)
 
     const animatedBlocks: AnimatedPyramidBlock[] = []
     const createdBatches: InstancedMesh[] = []
@@ -184,6 +309,9 @@ function Pyramid({ reveal, rootRef, lighting }: {
     for (const [geometry, group] of byGeometry) {
       const edgeGeometry = buildEdgeGeometry(geometry, 25)
       createdGeometries.push(edgeGeometry)
+      const glowOpen = new InstancedBufferAttribute(new Float32Array(group.length), 1)
+      glowOpen.setUsage(DynamicDrawUsage)
+      edgeGeometry.setAttribute('aGlowOpen', glowOpen)
       const batch = new InstancedMesh(edgeGeometry, material, group.length)
       batch.name = 'Pyramid block batch'
       batch.castShadow = true
@@ -214,17 +342,26 @@ function Pyramid({ reveal, rootRef, lighting }: {
           blockCenter.z - pyramidCenter.z,
         ).normalize()
         blockWorldX.push(blockCenter.clone().applyMatrix4(root.matrixWorld).x)
+        const restingBox = geometry.boundingBox!.clone().applyMatrix4(matrix)
+        // Sitting on the pyramid's floor, within half its own height.
+        const isBase = restingBox.min.y - pyramidBounds.min.y
+          < (restingBox.max.y - restingBox.min.y) * 0.5
 
         animatedBlocks.push({
           batch,
           index,
+          glowOpen,
           position,
           quaternion,
           scale,
           direction,
+          restingBox,
+          restingCenter: blockCenter,
+          hover: 0,
           delay: 0,
-          distance: MathUtils.lerp(0.735, 1.365, height),
-          height,
+          isBase,
+          offset: 0,
+          visibleHover: 0,
         })
       }
       batch.instanceMatrix.needsUpdate = true
@@ -242,6 +379,8 @@ function Pyramid({ reveal, rootRef, lighting }: {
 
     blocks.current = animatedBlocks
     batches.current = createdBatches
+    markedBlocks.current = []
+    markerEdges.current = []
 
     return () => {
       blocks.current = []
@@ -253,7 +392,64 @@ function Pyramid({ reveal, rootRef, lighting }: {
       for (const geometry of createdGeometries) geometry.dispose()
       material.dispose()
     }
-  }, [scene, reveal, pyramidMaterial, edges])
+  }, [scene, reveal, pyramidMaterial, edges, glow])
+
+  function updateMarkers(root: Group | null) {
+    const overlay = markerOverlay.current
+    if (!overlay || !root) return
+    const marked = markedBlocks.current
+    let changed = false
+    for (let index = marked.length - 1; index >= 0; index -= 1) {
+      if (marked[index].visibleHover < markerExitHover) {
+        marked.splice(index, 1)
+        changed = true
+      }
+    }
+    if (marked.length < markerLimit) {
+      const candidates = blocks.current
+        .filter((block) => block.visibleHover >= markerEnterHover && !marked.includes(block))
+        .sort((a, b) => b.visibleHover - a.visibleHover)
+      for (const block of candidates) {
+        if (marked.length >= markerLimit) break
+        const crowded = marked.some((other) =>
+          other.restingCenter.distanceTo(block.restingCenter) < markerSpacing)
+        if (crowded) continue
+        marked.push(block)
+        changed = true
+      }
+    }
+    if (changed) markerEdges.current = connectMarkers(marked)
+
+    // Anchor on the centre of whichever face of the block looks most towards
+    // the camera. Block boxes are axis-aligned in the batch root's space.
+    hoverInverse.copy(root.matrixWorld).invert()
+    markerCamera.copy(camera.position).applyMatrix4(hoverInverse)
+    const width = gl.domElement.clientWidth
+    const height = gl.domElement.clientHeight
+    const current = markers.current
+    current.length = marked.length
+    for (const [index, block] of marked.entries()) {
+      markerPoint.copy(block.restingCenter).addScaledVector(block.direction, pyramidBlockTravel * block.offset)
+      block.restingBox.getSize(markerSize).multiplyScalar(0.5)
+      const toCameraX = markerCamera.x - markerPoint.x
+      const toCameraY = markerCamera.y - markerPoint.y
+      const toCameraZ = markerCamera.z - markerPoint.z
+      const reachX = Math.abs(toCameraX)
+      const reachY = Math.abs(toCameraY)
+      const reachZ = Math.abs(toCameraZ)
+      if (reachX >= reachY && reachX >= reachZ) markerPoint.x += Math.sign(toCameraX) * markerSize.x
+      else if (reachY >= reachZ) markerPoint.y += Math.sign(toCameraY) * markerSize.y
+      else markerPoint.z += Math.sign(toCameraZ) * markerSize.z
+
+      markerPoint.applyMatrix4(root.matrixWorld).project(camera)
+      const marker = current[index] ?? (current[index] = { x: 0, y: 0, opacity: 0, label: '' })
+      marker.x = (markerPoint.x + 1) * 0.5 * width
+      marker.y = (1 - markerPoint.y) * 0.5 * height
+      marker.opacity = markerPoint.z > 1 ? 0 : MathUtils.smoothstep(block.visibleHover, markerExitHover, 0.7)
+      marker.label = extensionLabel(block.offset)
+    }
+    overlay.update(current, markerEdges.current)
+  }
 
   useFrame((_, delta) => {
     const pyramidProgress = reveal.progress.value
@@ -268,8 +464,41 @@ function Pyramid({ reveal, rootRef, lighting }: {
       edges.time.value += Math.min(delta, 0.1)
     }
 
+    // The trapped light takes over as the construction outline fades out.
+    // oxlint-disable-next-line react/immutability
+    glow.visibility.value = MathUtils.smoothstep(pyramidProgress, 0.85, 1)
+    glow.color.value.set(lighting.glowColor)
+    glow.seamIntensity.value = lighting.glowSeamIntensity
+    glow.seamWidth.value = lighting.glowSeamWidth
+    glow.coreIntensity.value = lighting.glowCoreIntensity
+    glow.pulseBoost.value = lighting.glowPulseBoost
+
     const motionVisibility = !state.current.reducedMotion && pyramidProgress >= 0.999 ? 1 : 0
-    if (motionVisibility > 0) pulseElapsed.current += Math.min(delta, 0.1)
+    const frameDelta = Math.min(delta, 0.1)
+    if (motionVisibility > 0) pulseElapsed.current += frameDelta
+
+    // Hit-test the blocks' resting boxes, not the moving instances: a block
+    // that lifts away from the cursor would otherwise drop the hover and fall
+    // back, flickering in and out.
+    let hovering = false
+    const root = batchRoot.current
+    if (motionVisibility > 0 && hoverPointer.current && root) {
+      hoverRaycaster.setFromCamera(hoverPointer.current, camera)
+      hoverInverse.copy(root.matrixWorld).invert()
+      hoverRay.copy(hoverRaycaster.ray).applyMatrix4(hoverInverse)
+      let nearest = Infinity
+      for (const block of blocks.current) {
+        if (!hoverRay.intersectBox(block.restingBox, hoverCandidate)) continue
+        const distance = hoverCandidate.distanceToSquared(hoverRay.origin)
+        if (distance < nearest) {
+          nearest = distance
+          hoverHit.copy(hoverCandidate)
+        }
+      }
+      hovering = nearest < Infinity
+    }
+    const breath = 1 - hoverBreathDepth
+      + hoverBreathDepth * Math.sin(pulseElapsed.current * Math.PI * 2 / hoverBreathPeriod)
 
     for (const block of blocks.current) {
       const phase = MathUtils.euclideanModulo(
@@ -277,14 +506,34 @@ function Pyramid({ reveal, rootRef, lighting }: {
         pyramidPulsePeriod,
       )
       const activePulse = heartbeatAt(phase) * motionVisibility
-      const layerInfluence = MathUtils.smootherstep(block.height, 0.08, 0.55)
-      const movementScale = MathUtils.lerp(lighting.baseMovement, 1, layerInfluence)
+      const hoverTarget = hovering
+        ? 1 - MathUtils.smoothstep(
+          block.restingCenter.distanceTo(hoverHit),
+          lighting.hoverRadius * 0.35,
+          lighting.hoverRadius,
+        )
+        : 0
+      // Out quickly, back a little slower so blocks settle rather than drop.
+      const hoverEase = hoverTarget > block.hover ? lighting.hoverEase : lighting.hoverEase * 0.5
+      // Per-block animation state lives in a ref and is advanced every frame.
+      // oxlint-disable-next-line react/immutability
+      block.hover = MathUtils.damp(block.hover, hoverTarget, hoverEase, frameDelta)
+      const movementScale = block.isBase ? lighting.baseMovement : 1
+      // Whichever is further wins, so a beat still passes through hovered blocks
+      // without stacking into an extreme jump.
+      const offsetAmount = movementScale * Math.max(
+        activePulse,
+        block.hover * lighting.hoverStrength * breath,
+      )
+      block.glowOpen.setX(block.index, offsetAmount)
+      block.offset = offsetAmount
+      block.visibleHover = block.hover * movementScale
 
       // Instances are not scene-graph children, so the pulse offset has to be
       // written straight into the batch's matrix buffer.
       pulseOffset.copy(block.position).addScaledVector(
         block.direction,
-        block.distance * activePulse * movementScale,
+        pyramidBlockTravel * offsetAmount,
       )
       pulseMatrix.compose(pulseOffset, block.quaternion, block.scale)
       block.batch.setMatrixAt(block.index, pulseMatrix)
@@ -294,8 +543,12 @@ function Pyramid({ reveal, rootRef, lighting }: {
       // Three instance buffers are mutable render-loop state by design.
       // oxlint-disable-next-line react/immutability
       batch.instanceMatrix.needsUpdate = true
+      batch.geometry.getAttribute('aGlowOpen').needsUpdate = true
     }
+
+    updateMarkers(root)
   })
+
 
   return (
     <group ref={rootRef} scale={0.9} rotation-y={pyramidRotationY}>
@@ -347,7 +600,6 @@ function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.R
 
 export function Scene({ lighting }: { lighting: LightingSettings }) {
   const gl = useThree((state) => state.gl)
-  const viewportWidth = useThree((state) => state.size.width)
   const { state } = useLoopScroll()
   const reveal = useMemo(() => createRevealUniforms(terrainRevealCellSize), [])
   const pyramidReveal = useMemo(() => createRevealUniforms(pyramidRevealCellSize), [])
@@ -472,8 +724,8 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
           lighting.sunPositionZ,
         ]}
         castShadow
-        shadow-mapSize-width={viewportWidth < 600 ? 1024 : 2048}
-        shadow-mapSize-height={viewportWidth < 600 ? 1024 : 2048}
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
         shadow-camera-left={-18}
         shadow-camera-right={18}
         shadow-camera-top={18}
@@ -492,6 +744,20 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
           lighting={lighting}
         />
       </group>
+      {/* The composer disables the renderer's own tone mapping, so ACES is
+          reapplied after bloom, which has to see the untonemapped HDR glow.
+          MSAA on the composer's HDR buffer cost about as much as the bloom
+          itself, so edges are smoothed by a single SMAA pass instead. */}
+      <EffectComposer multisampling={0}>
+        <Bloom
+          mipmapBlur
+          intensity={lighting.bloomIntensity}
+          luminanceThreshold={lighting.bloomThreshold}
+          luminanceSmoothing={lighting.bloomSmoothing}
+        />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+        <SMAA />
+      </EffectComposer>
     </>
   )
 }

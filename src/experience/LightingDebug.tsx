@@ -49,6 +49,8 @@ export function LightingDebug({ lighting, setLighting }: Props) {
           onChange={(event) => update('skyColor', event.currentTarget.value)} /></label>
         <label>Ground fill <input type="color" value={lighting.groundColor}
           onChange={(event) => update('groundColor', event.currentTarget.value)} /></label>
+        <label>Core glow <input type="color" value={lighting.glowColor}
+          onChange={(event) => update('glowColor', event.currentTarget.value)} /></label>
       </div>
       <Slider label="Ambient" value={lighting.ambientIntensity} min={0} max={3} step={0.05}
         onChange={(value) => update('ambientIntensity', value)} />
@@ -66,6 +68,26 @@ export function LightingDebug({ lighting, setLighting }: Props) {
         onChange={(value) => update('exposure', value)} />
       <Slider label="Base movement" value={lighting.baseMovement} min={0} max={1} step={0.01}
         onChange={(value) => update('baseMovement', value)} />
+      <Slider label="Hover radius" value={lighting.hoverRadius} min={0.5} max={6} step={0.05}
+        onChange={(value) => update('hoverRadius', value)} />
+      <Slider label="Hover strength" value={lighting.hoverStrength} min={0} max={1} step={0.01}
+        onChange={(value) => update('hoverStrength', value)} />
+      <Slider label="Hover ease" value={lighting.hoverEase} min={1} max={20} step={0.5}
+        onChange={(value) => update('hoverEase', value)} />
+      <Slider label="Seam glow" value={lighting.glowSeamIntensity} min={0} max={12} step={0.1}
+        onChange={(value) => update('glowSeamIntensity', value)} />
+      <Slider label="Seam width" value={lighting.glowSeamWidth} min={0.5} max={5} step={0.1}
+        onChange={(value) => update('glowSeamWidth', value)} />
+      <Slider label="Core glow" value={lighting.glowCoreIntensity} min={0} max={15} step={0.1}
+        onChange={(value) => update('glowCoreIntensity', value)} />
+      <Slider label="Pulse glow boost" value={lighting.glowPulseBoost} min={0} max={8} step={0.1}
+        onChange={(value) => update('glowPulseBoost', value)} />
+      <Slider label="Bloom" value={lighting.bloomIntensity} min={0} max={4} step={0.05}
+        onChange={(value) => update('bloomIntensity', value)} />
+      <Slider label="Bloom threshold" value={lighting.bloomThreshold} min={0} max={4} step={0.05}
+        onChange={(value) => update('bloomThreshold', value)} />
+      <Slider label="Bloom smoothing" value={lighting.bloomSmoothing} min={0} max={1} step={0.01}
+        onChange={(value) => update('bloomSmoothing', value)} />
       <div className="debug-actions">
         <button onClick={() => setLighting(defaultLighting)}>Reset</button>
         <button onClick={copySettings}>Copy values</button>

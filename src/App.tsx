@@ -43,7 +43,15 @@ export default function App() {
   return (
     <main className={`experience${cameraDebugEnabled ? ' camera-debug' : ''}`}>
       <LoopScrollProvider>
-        <Canvas shadows camera={{ position: [0, 22, 0.01], fov: 45 }} dpr={[1, 2]}>
+        {/* The composer renders off-screen and anti-aliases itself, so the
+            canvas's own MSAA would be wasted. 1.5 caps the post-processing
+            passes' pixel count on high-DPI screens. */}
+        <Canvas
+          shadows
+          camera={{ position: [0, 22, 0.01], fov: 45 }}
+          dpr={[1, 1.5]}
+          gl={{ antialias: false }}
+        >
           <Suspense fallback={null}>
             <Scene lighting={lighting} />
           </Suspense>

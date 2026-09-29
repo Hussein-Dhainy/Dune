@@ -46,12 +46,15 @@ source_blocks = sorted(
     },
     key=lambda obj: obj.name,
 )
-if len(source_blocks) != 146:
-    raise RuntimeError(f"Expected 146 rebuilt pyramid blocks, got {len(source_blocks)}")
+# 146 authored blocks, minus the bottom course (32) and the split apex slab and
+# cap (2), plus the single merged apex; the removed parts live in
+# Pyramid_Rebuild_Archive, outside this collection tree.
+if len(source_blocks) != 113:
+    raise RuntimeError(f"Expected 113 rebuilt pyramid blocks, got {len(source_blocks)}")
 
 # Work on temporary object copies so exporting never changes the authored
 # scene. The copies retain linked mesh datablocks, allowing glTF to reuse the
-# seven block geometries across all 146 independently animated nodes.
+# seven block geometries across all 113 independently animated nodes.
 temporary = bpy.data.collections.new("__Pyramid_Web_Export__")
 scene.collection.children.link(temporary)
 export_blocks = []
