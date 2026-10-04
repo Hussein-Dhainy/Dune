@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { MathUtils } from 'three'
+import type { PerspectiveCamera } from 'three'
 import { gsap } from 'gsap'
 import { useProgress } from '@react-three/drei'
-import { cameraPoses, introPose, mixPose, orbitPose, pointerOrbit, sampleCamera } from './cameraPath'
-import { cycleLength, sampleCycle, scrollConfig, sectionStart, sections, smoothPosition } from './cycle'
+import { baseFov, cameraPoses, introPose, mixPose, orbitPose, pointerOrbit, sectionPointerOrbit, transitionCamera } from './cameraPath'
+import { sampleCycle, scrollConfig, smoothPosition } from './cycle'
+import { sampleTransition } from './transitionTimeline'
 import { useLoopScroll } from './useLoopScroll'
 
 const introDuration = 3.2
@@ -16,8 +18,6 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
   const camera = useThree((root) => root.camera)
   const assetsActive = useProgress((progress) => progress.active)
   const intro = useRef<gsap.core.Timeline | null>(null)
-  const cycle = useRef<gsap.core.Timeline | null>(null)
-  const fade = useRef({ value: 0 })
   // Mouse position, -1 to 1 from left to right and bottom to top; centred
   // when the mouse is away. Only real mice count, since touch drags scroll.
   const pointerX = useRef(0)
@@ -51,20 +51,10 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
   useEffect(() => {
     const entrance = gsap.timeline({ paused: true })
       .to(state.current, { introProgress: 1, duration: introDuration, ease: 'none' })
-    const loop = gsap.timeline({ paused: true })
-    for (let index = 0; index < sections.length; index++) {
-      const { hold, transition } = sections[index]
-      const start = sectionStart(index) + hold
-      loop.to(fade.current, { value: 1, duration: transition / 2, ease: 'sine.inOut' }, start)
-      loop.to(fade.current, { value: 0, duration: transition / 2, ease: 'sine.inOut' }, start + transition / 2)
-    }
     intro.current = entrance
-    cycle.current = loop
     return () => {
       entrance.kill()
-      loop.kill()
       intro.current = null
-      cycle.current = null
     }
   }, [state])
 
@@ -88,6 +78,7 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
   useFrame(({ camera }, delta) => {
     if (cameraDebugEnabled) return
     const current = state.current
+    let fov = baseFov
     if (current.phase === 'intro') {
       introElapsed.current += Math.min(delta, 0.1)
       intro.current?.time(current.reducedMotion ? introDuration : introElapsed.current)
@@ -99,28 +90,38 @@ export function ExperienceDirector({ cameraDebugEnabled = false }: { cameraDebug
       // R3F animation state intentionally lives in a mutable ref, outside React rendering.
       // oxlint-disable-next-line react/immutability
       current.position = smoothPosition(current.position, current.target, Math.min(delta, 0.1), current.reducedMotion ? 0 : scrollConfig.damping)
-      const sample = sampleCycle(current.position)
-      const basePose = current.reducedMotion ? cameraPoses[sample.transition < 0.5 ? sample.index : sample.nextIndex] : sampleCamera(current.position)
+      // The single source of truth for the sandstorm: everything else reads
+      // current.transition, which is rewritten here before any of them run.
+      const transition = sampleTransition(sampleCycle(current.position), current.reducedMotion, current.transition)
+      const basePose = transitionCamera(transition, current.reducedMotion)
+      fov = basePose.fov
       const orbitDelta = Math.min(delta, 0.1)
-      const targetYaw = current.reducedMotion ? 0 : pointerX.current * pointerOrbit.maxYaw
+      // Pointer parallax fades out with the storm, so it never fights the retreat.
+      const orbitWeight = current.reducedMotion
+        ? 0
+        : transition.interaction * sectionPointerOrbit[transition.activeSection]
+      const targetYaw = pointerX.current * pointerOrbit.maxYaw * orbitWeight
       // Moving the mouse up swings the camera up, looking down on the pyramid.
-      const targetPitch = current.reducedMotion ? 0 : pointerY.current * pointerOrbit.maxPitch
+      const targetPitch = pointerY.current * pointerOrbit.maxPitch * orbitWeight
       orbitYaw.current = MathUtils.damp(orbitYaw.current, targetYaw, pointerOrbit.ease, orbitDelta)
       orbitPitch.current = MathUtils.damp(orbitPitch.current, targetPitch, pointerOrbit.ease, orbitDelta)
       const pose = orbitPose(basePose, orbitYaw.current, orbitPitch.current)
       camera.position.set(...pose.position)
       camera.lookAt(...pose.target)
-      cycle.current?.time(sample.progress * cycleLength)
     } else {
       camera.position.set(...introPose.position)
       camera.lookAt(...introPose.target)
     }
-    // Scrubbed fade is a placeholder for the eventual desert transition shader.
-    const veil = document.getElementById('transition-veil')
-    if (veil) veil.style.opacity = current.phase === 'interactive' && !current.reducedMotion ? String(fade.current.value) : '0'
+    // Only touch the projection when the lens actually changes.
+    const lens = camera as PerspectiveCamera
+    if (lens.isPerspectiveCamera && Math.abs(lens.fov - fov) > 1e-4) {
+      lens.fov = fov
+      lens.updateProjectionMatrix()
+    }
     // Negative priority runs before the scene's own callbacks (priority 0), so
-    // hover hit-tests and marker projection use this frame's camera. It does
-    // not take over rendering, which only positive priorities do.
+    // hover hit-tests, marker projection and the storm all use this frame's
+    // camera and transition. It does not take over rendering, which only
+    // positive priorities do.
   }, -1)
   return null
 }

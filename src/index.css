@@ -33,8 +33,62 @@ body { overflow: hidden; }
 .brand { top: 32px; left: 32px; font-size: 28px; letter-spacing: 0.2em; }
 .brand span { display: block; margin-top: 8px; font-size: 11px; letter-spacing: 0.06em; color: #c5ac86; }
 .scroll-hint { left: 32px; bottom: 24px; font-size: 12px; color: #c5ac86; }
+/* Screen-space finishing: a faint vignette and stepped film grain. Both sit
+   under the interface text (z-index 3) and never take pointer events. */
+.film-vignette, .film-grain { position: absolute; z-index: 2; pointer-events: none; }
+.film-vignette {
+  inset: 0;
+  background: radial-gradient(ellipse 125% 115% at 50% 45%, transparent 60%, rgb(38 24 14 / 0.22) 100%);
+}
+.film-grain {
+  /* Must match the SVG tile in GrainOverlay.tsx; the overscan lets the tile
+     jump around without exposing an edge. */
+  --grain-tile: 160px;
+  inset: calc(var(--grain-tile) * -1);
+  background-size: var(--grain-tile) var(--grain-tile);
+  opacity: 0.08;
+  mix-blend-mode: overlay;
+  animation: film-grain-jitter 0.8s steps(1, end) infinite;
+}
+@keyframes film-grain-jitter {
+  0% { transform: translate(0, 0); }
+  12.5% { transform: translate(-37px, 21px); }
+  25% { transform: translate(52px, -64px); }
+  37.5% { transform: translate(-91px, -18px); }
+  50% { transform: translate(18px, 83px); }
+  62.5% { transform: translate(76px, 29px); }
+  75% { transform: translate(-58px, 97px); }
+  87.5% { transform: translate(33px, -112px); }
+}
+/* A blend mode over a live canvas adds a compositing pass; touch devices get
+   plain alpha grain instead, slightly slower and fainter. */
+@media (pointer: coarse) {
+  .film-grain { mix-blend-mode: normal; opacity: 0.035; animation-duration: 1.2s; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .film-grain { animation: none; }
+}
 .loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: #191614; font-size: 13px; }
-.transition-veil { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #191614; opacity: 0; }
+/* Page content for non-hero scenes. The layer sticks to the scroll viewport
+   and lets pointers through to the scroller; only a scene's own content takes
+   input, and only once ScrollSceneController has made it interactive. */
+.scene-content-layer { position: sticky; top: 0; height: 100%; pointer-events: none; }
+.scene-content {
+  position: absolute;
+  left: 32px;
+  bottom: 72px;
+  max-width: 360px;
+  padding: 20px 22px;
+  border: 1px solid rgb(245 233 215 / 0.25);
+  border-radius: 6px;
+  background: rgb(38 27 18 / 0.72);
+  opacity: 0;
+  pointer-events: none;
+}
+.scene-content.is-interactive { pointer-events: auto; }
+.scene-content h2 { margin: 4px 0 8px; font-size: 22px; font-weight: 500; letter-spacing: 0.08em; }
+.scene-content p { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: #e8dccb; }
+.scene-content .scene-content-eyebrow { margin: 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #d5a666; }
 .debug-overlay { position: absolute; top: 24px; right: 24px; z-index: 5; padding: 14px; border: 1px solid #5b4a39; border-radius: 6px; background: #191614e8; font: 11px/1.6 monospace; max-width: calc(100% - 32px); }
 .lighting-debug { top: 72px; width: 280px; max-height: calc(100svh - 96px); overflow-y: auto; }
 .camera-debug-overlay { top: 24px; right: 320px; width: 300px; }
@@ -60,4 +114,5 @@ button:focus-visible { outline: 2px solid #d5a666; }
   .lighting-debug { top: 158px; max-height: calc(100svh - 174px); }
   .camera-debug-overlay { top: 206px; right: 16px; }
   .scroll-hint { left: 20px; font-size: 10px; }
+  .scene-content { left: 16px; right: 16px; bottom: 56px; max-width: none; }
 }

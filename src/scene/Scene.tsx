@@ -29,6 +29,14 @@ import { applyEdgeShader, buildEdgeGeometry, createEdgeUniforms } from './pyrami
 import { applyPyramidGlowShader, createPyramidGlowUniforms } from './pyramidGlow'
 import { createHoverMarkerOverlay } from './hoverMarkers'
 import type { HoverMarker, HoverMarkerEdge } from './hoverMarkers'
+import { applyAtmosphereFog, createAtmosphereUniforms } from './atmosphere/desertAtmosphereShaders'
+import type { AtmosphereUniforms } from './atmosphere/desertAtmosphereShaders'
+import { DesertAtmosphere } from './atmosphere/DesertAtmosphere'
+import type { QualityProfile } from './atmosphere/quality'
+import { ScrollSceneController } from './transition/ScrollSceneController'
+import { SandstormTransition } from './transition/SandstormTransition'
+import { SecondScene } from './transition/SecondScene'
+import { TransitionPostFX } from './transition/TransitionPostFX'
 
 const pyramidModelUrl = '/models/pyramid.glb?v=no-base-course-merged-apex-1'
 const terrainModelUrl = '/models/desert-terrain.glb?v=webref-geometry-2'
@@ -183,8 +191,9 @@ function prepareRevealMaterials(
   return [...materials.values()]
 }
 
-function Pyramid({ reveal, rootRef, lighting }: {
+function Pyramid({ reveal, atmosphere, rootRef, lighting }: {
   reveal: RevealUniforms
+  atmosphere: AtmosphereUniforms
   rootRef: React.RefObject<Group | null>
   lighting: LightingSettings
 }) {
@@ -294,6 +303,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
     applyRevealShader(material, reveal)
     applyEdgeShader(material, edges)
     applyPyramidGlowShader(material, glow)
+    applyAtmosphereFog(material, atmosphere)
 
     // The beat sweeps across the screen, so blocks are ordered by world X (the
     // camera looks down -Z) rather than by their rotated local position.
@@ -392,7 +402,7 @@ function Pyramid({ reveal, rootRef, lighting }: {
       for (const geometry of createdGeometries) geometry.dispose()
       material.dispose()
     }
-  }, [scene, reveal, pyramidMaterial, edges, glow])
+  }, [scene, reveal, atmosphere, pyramidMaterial, edges, glow])
 
   function updateMarkers(root: Group | null) {
     const overlay = markerOverlay.current
@@ -482,7 +492,10 @@ function Pyramid({ reveal, rootRef, lighting }: {
     // back, flickering in and out.
     let hovering = false
     const root = batchRoot.current
-    if (motionVisibility > 0 && hoverPointer.current && root) {
+    // Hover belongs to the settled scene: it lets go as the storm arrives.
+    const transition = state.current.transition
+    const hoverable = transition.activeSection === 0 && transition.interaction > 0.5
+    if (motionVisibility > 0 && hoverable && hoverPointer.current && root) {
       hoverRaycaster.setFromCamera(hoverPointer.current, camera)
       hoverInverse.copy(root.matrixWorld).invert()
       hoverRay.copy(hoverRaycaster.ray).applyMatrix4(hoverInverse)
@@ -557,7 +570,11 @@ function Pyramid({ reveal, rootRef, lighting }: {
   )
 }
 
-function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.RefObject<Group | null> }) {
+function Terrain({ reveal, atmosphere, rootRef }: {
+  reveal: RevealUniforms
+  atmosphere: AtmosphereUniforms
+  rootRef: React.RefObject<Group | null>
+}) {
   const { scene } = useGLTF(terrainModelUrl)
   const [baseColorMap, normalMap, roughnessMap] = useTexture(terrainTextureUrls)
   useEffect(() => {
@@ -583,6 +600,7 @@ function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.R
       sand.metalness = 0
       sand.normalScale.set(0.55, 0.55)
       sand.needsUpdate = true
+      applyAtmosphereFog(sand, atmosphere)
     })
     scene.traverse((object) => {
       if ('isMesh' in object) (object as Mesh).receiveShadow = true
@@ -590,7 +608,7 @@ function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.R
     return () => {
       for (const material of materials) material.dispose()
     }
-  }, [scene, reveal, baseColorMap, normalMap, roughnessMap])
+  }, [scene, reveal, atmosphere, baseColorMap, normalMap, roughnessMap])
   return (
     <group ref={rootRef}>
       <primitive object={scene} />
@@ -598,14 +616,19 @@ function Terrain({ reveal, rootRef }: { reveal: RevealUniforms; rootRef: React.R
   )
 }
 
-export function Scene({ lighting }: { lighting: LightingSettings }) {
+export function Scene({ lighting, quality }: { lighting: LightingSettings; quality: QualityProfile }) {
   const gl = useThree((state) => state.gl)
   const { state } = useLoopScroll()
   const reveal = useMemo(() => createRevealUniforms(terrainRevealCellSize), [])
   const pyramidReveal = useMemo(() => createRevealUniforms(pyramidRevealCellSize), [])
+  const atmosphere = useMemo(() => createAtmosphereUniforms(), [])
   const revealElapsed = useRef(0)
   const pyramidRoot = useRef<Group>(null)
   const terrainRoot = useRef<Group>(null)
+  // One root per section in cycle.ts; only the active one is ever drawn.
+  const pyramidSceneRoot = useRef<Group>(null)
+  const secondSceneRoot = useRef<Group>(null)
+  const sceneRoots = useMemo(() => [pyramidSceneRoot, secondSceneRoot], [])
 
   useEffect(() => {
     // Three renderer configuration is mutable by design and only changes on input.
@@ -691,6 +714,9 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
     reveal.timeline.value = timeline
     // oxlint-disable-next-line react/immutability
     reveal.progress.value = terrainProgress
+    // Airborne sand arrives with the desert it blows over.
+    // oxlint-disable-next-line react/immutability
+    atmosphere.uSandVisibility.value = MathUtils.smoothstep(terrainProgress, 0.15, 0.8)
 
     // Same timeline so the block outlines still fade in step with the sand,
     // but its own progress curve over its own radius.
@@ -707,9 +733,12 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
 
   return (
     <>
-      <color attach="background" args={[lighting.background]} />
-      <ambientLight color={lighting.ambientColor} intensity={lighting.ambientIntensity} />
+      {/* Only seen before the sky's first frame; the sky covers every pixel. */}
+      <color attach="background" args={[lighting.hazeHorizonColor]} />
+      {/* Named so the second scene can switch them off for its own renders. */}
+      <ambientLight name="Desert ambient" color={lighting.ambientColor} intensity={lighting.ambientIntensity} />
       <hemisphereLight
+        name="Desert hemisphere"
         color={lighting.skyColor}
         groundColor={lighting.groundColor}
         intensity={lighting.hemisphereIntensity}
@@ -724,8 +753,8 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
           lighting.sunPositionZ,
         ]}
         castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        shadow-mapSize-width={quality.shadowMapSize}
+        shadow-mapSize-height={quality.shadowMapSize}
         shadow-camera-left={-18}
         shadow-camera-right={18}
         shadow-camera-top={18}
@@ -736,14 +765,31 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
         shadow-normalBias={0.055}
         shadow-radius={2}
       />
-      <Terrain reveal={reveal} rootRef={terrainRoot} />
-      <group name="landmarks" position={[0, -0.05, 0.65]}>
-        <Pyramid
-          reveal={pyramidReveal}
-          rootRef={pyramidRoot}
-          lighting={lighting}
-        />
+      <group ref={pyramidSceneRoot} name="Pyramid scene">
+        <Terrain reveal={reveal} atmosphere={atmosphere} rootRef={terrainRoot} />
+        <group name="landmarks" position={[0, -0.05, 0.65]}>
+          <Pyramid
+            reveal={pyramidReveal}
+            atmosphere={atmosphere}
+            rootRef={pyramidRoot}
+            lighting={lighting}
+          />
+        </group>
       </group>
+      <SecondScene rootRef={secondSceneRoot} anchorCount={quality.networkAnchors} />
+      {/* Sky and ambient sand are shared by both scenes. */}
+      <DesertAtmosphere
+        atmosphere={atmosphere}
+        lighting={lighting}
+        profile={quality}
+        terrainRoot={terrainRoot}
+      />
+      <SandstormTransition
+        atmosphere={atmosphere}
+        count={quality.stormParticles}
+        detailed={quality.detailedNoise}
+      />
+      <ScrollSceneController sceneRoots={sceneRoots} />
       {/* The composer disables the renderer's own tone mapping, so ACES is
           reapplied after bloom, which has to see the untonemapped HDR glow.
           MSAA on the composer's HDR buffer cost about as much as the bloom
@@ -751,12 +797,15 @@ export function Scene({ lighting }: { lighting: LightingSettings }) {
       <EffectComposer multisampling={0}>
         <Bloom
           mipmapBlur
-          intensity={lighting.bloomIntensity}
+          levels={quality.bloomLevels}
+          intensity={lighting.bloomIntensity * quality.bloomIntensityScale}
           luminanceThreshold={lighting.bloomThreshold}
           luminanceSmoothing={lighting.bloomSmoothing}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
         <SMAA />
+        {/* Its own pass after SMAA, enabled only while a storm is on screen. */}
+        <TransitionPostFX quality={quality} lighting={lighting} atmosphere={atmosphere} sceneRoots={sceneRoots} />
       </EffectComposer>
     </>
   )

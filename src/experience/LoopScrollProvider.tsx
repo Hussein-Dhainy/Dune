@@ -2,11 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { cycleLength, nearestSectionPosition, scrollConfig, sections } from './cycle'
 import { LoopScrollContext } from './useLoopScroll'
+import { createTransitionState } from './transitionTimeline'
 import type { Phase, ScrollState } from './useLoopScroll'
 
-export function LoopScrollProvider({ children }: { children: ReactNode }) {
+export function LoopScrollProvider({ children, scrollContent }: {
+  children: ReactNode
+  /** Rendered inside the scroll container, so wheel and touch over it still
+   *  scroll (scroll chaining follows the containing-block chain). */
+  scrollContent?: ReactNode
+}) {
   const [phase, setReactPhase] = useState<Phase>('loading')
-  const state = useRef<ScrollState>({ target: 0, position: 0, phase: 'loading', introProgress: 0, reducedMotion: false })
+  const [sceneSection, setSceneSection] = useState(0)
+  const state = useRef<ScrollState>({
+    target: 0,
+    position: 0,
+    phase: 'loading',
+    introProgress: 0,
+    reducedMotion: false,
+    transition: createTransitionState(),
+  })
   const container = useRef<HTMLDivElement>(null)
   const previousTop = useRef(0)
 
@@ -65,6 +79,8 @@ export function LoopScrollProvider({ children }: { children: ReactNode }) {
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (state.current.phase !== 'interactive') return
+    // Space and Enter belong to a focused control inside the scene content.
+    if (event.target !== event.currentTarget && (event.key === ' ' || event.key === 'Enter')) return
     let movement = 0
     switch (event.key) {
       case 'ArrowDown': movement = 80 / scrollConfig.pixelsPerUnit; break
@@ -81,7 +97,7 @@ export function LoopScrollProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <LoopScrollContext.Provider value={{ state, phase, setPhase, jumpTo, finishIntro }}>
+    <LoopScrollContext.Provider value={{ state, phase, setPhase, jumpTo, finishIntro, sceneSection, setSceneSection }}>
       {children}
       <div
         ref={container}
@@ -93,6 +109,7 @@ export function LoopScrollProvider({ children }: { children: ReactNode }) {
         onKeyDown={onKeyDown}
         style={{ visibility: phase === 'interactive' ? 'visible' : 'hidden' }}
       >
+        {scrollContent}
         <div className="loop-scroll-spacer" />
       </div>
     </LoopScrollContext.Provider>

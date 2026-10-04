@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
+// The intro advances at most 0.1s per rendered frame, so under software
+// rendering (a few frames per second) it takes far longer than its 3.2s.
+const introTimeout = 45_000
+test.setTimeout(90_000)
+
 async function readState(page: Page) {
   const text = await page.locator('.controller-debug output').textContent() ?? ''
   const numbers = text.match(/Position ([\d.-]+) \/ Target ([\d.-]+)/)!
@@ -15,7 +20,7 @@ async function openExperience(page: Page) {
   await page.locator('.debug-overlay:not(.controller-debug)').evaluateAll((elements: HTMLDetailsElement[]) => {
     for (const element of elements) element.open = false
   })
-  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: introTimeout })
   await expect(page.locator('.controller-debug output')).toContainText('interactive')
 }
 
@@ -25,7 +30,7 @@ test('intro ignores input and hands off at the beginning without replaying on re
   await page.goto('/')
   await expect(page.locator('.loop-scroll')).toBeHidden()
   await page.mouse.wheel(0, 2000)
-  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.scroll-hint')).toBeVisible({ timeout: introTimeout })
   await expect.poll(async () => (await readState(page)).target).toBe(0)
   await page.setViewportSize({ width: 900, height: 650 })
   await expect(page.locator('.scroll-hint')).toBeVisible()
@@ -39,7 +44,8 @@ test('native scrolling and keyboard move forward and reverse across the seam', a
   await container.focus()
   await page.keyboard.press('ArrowUp')
   await expect.poll(async () => (await readState(page)).position).toBeLessThan(-0.02)
-  await expect(page.locator('.controller-debug output')).toContainText('Pyramid')
+  // Backwards over the seam lands in the loop's last section.
+  await expect(page.locator('.controller-debug output')).toContainText('Second scene')
   await page.keyboard.press('PageDown')
   await expect.poll(async () => (await readState(page)).position).toBeGreaterThan(0)
   await page.mouse.move(100, 600)
@@ -54,7 +60,7 @@ test('recentering preserves accumulated movement and does not count synthetic sc
     const delta = await page.locator('.loop-scroll').evaluate((element, fraction) => {
       const before = element.scrollTop
       element.scrollTop = (element.scrollHeight - element.clientHeight) * fraction
-      return (element.scrollTop - before) / 850
+      return (element.scrollTop - before) / 520
     }, fraction)
     const expected = before.target + delta
     await expect.poll(async () => Math.abs((await readState(page)).target - expected)).toBeLessThan(0.003)
@@ -76,8 +82,9 @@ test('debug section jumps work and reduced motion skips the animated intro', asy
   await page.getByRole('button', { name: 'Pyramid', exact: true }).click()
   await expect.poll(async () => (await readState(page)).position).toBe(0)
   await page.getByRole('button', { name: 'Transition 1', exact: true }).click()
-  await expect.poll(async () => (await readState(page)).position).toBe(-0.8)
-  await expect(page.locator('#transition-veil')).toHaveCSS('opacity', '0')
+  await expect.poll(async () => (await readState(page)).position).toBe(1.2)
+  // Reduced motion still reaches the transition, with no storm yet at its start.
+  await expect(page.locator('.controller-debug output')).toContainText('Wipe 0%')
 })
 
 test('touch swipe drives native scrolling', async ({ page, context, isMobile }) => {
@@ -106,8 +113,13 @@ test('loading an additional asset keeps the interactive timeline alive', async (
   })
   await expect(page.locator('.scroll-hint')).toBeVisible()
   await page.getByRole('button', { name: 'Transition 1', exact: true }).click()
-  await expect.poll(async () => (await readState(page)).position).toBeGreaterThan(1.19)
+  // A 1.2-unit damped move takes a while at software-rendered frame rates.
+  await expect.poll(async () => (await readState(page)).position, { timeout: 15_000 }).toBeGreaterThan(1.19)
   await page.locator('.loop-scroll').focus()
-  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown')
-  await expect.poll(async () => Number(await page.locator('#transition-veil').evaluate((element) => getComputedStyle(element).opacity))).toBeGreaterThan(0.5)
+  // ~1 unit into the 1.8-unit transition: the wipe should be most of the way up.
+  for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowDown')
+  await expect.poll(async () => {
+    const cover = (await readState(page)).text.match(/Wipe (\d+)%/)
+    return Number(cover?.[1] ?? 0)
+  }).toBeGreaterThan(50)
 })

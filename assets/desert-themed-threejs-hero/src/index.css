@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+:root {
+  --sand-dark: #2b1d12;
+  --sand-mid: #d9c5a5;
+  --sand-light: #e8d5b5;
+  --cream: #f3e6cc;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sand-dark);
+  color: var(--cream);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html,
+  body,
+  button,
+  a,
+  input[type="range"] {
+    cursor: none !important;
+  }
+}
+
+canvas {
+  display: block;
+}
+
+.desert-range {
+  --range-progress: 0%;
+  width: clamp(66px, 10vw, 142px);
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.desert-range--bar {
+  width: clamp(56px, 6.2vw, 92px);
+}
+
+.desert-range::-webkit-slider-runnable-track {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    rgba(243, 230, 204, 0.95) 0 var(--range-progress),
+    rgba(243, 230, 204, 0.32) var(--range-progress) 100%
+  );
+}
+
+.desert-range::-webkit-slider-thumb {
+  width: 9px;
+  height: 9px;
+  margin-top: -4px;
+  border: 1px solid #f3e6cc;
+  border-radius: 50%;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #2b1d12;
+  box-shadow: 0 0 0 2px rgba(43, 29, 18, 0.28);
+}
+
+.desert-range::-moz-range-track {
+  height: 1px;
+  background: rgba(243, 230, 204, 0.32);
+}
+
+.desert-range::-moz-range-progress {
+  height: 1px;
+  background: rgba(243, 230, 204, 0.95);
+}
+
+.desert-range::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #f3e6cc;
+  border-radius: 50%;
+  background: #2b1d12;
+  box-shadow: 0 0 0 2px rgba(43, 29, 18, 0.28);
+}
+
+.desert-range:focus-visible {
+  outline: 1px solid rgba(243, 230, 204, 0.9);
+  outline-offset: 4px;
+}
+
+/* Grain: tiled feTurbulence texture, jittered with steps() so it costs nothing per frame */
+@keyframes grain-shift {
+  0% { transform: translate(0, 0); }
+  10% { transform: translate(-6%, -9%); }
+  20% { transform: translate(-13%, 5%); }
+  30% { transform: translate(7%, -18%); }
+  40% { transform: translate(-6%, 16%); }
+  50% { transform: translate(-13%, 8%); }
+  60% { transform: translate(14%, 0); }
+  70% { transform: translate(0, 12%); }
+  80% { transform: translate(-6%, 18%); }
+  90% { transform: translate(9%, 6%); }
+  100% { transform: translate(0, 0); }
+}
+
+.grain {
+  position: fixed;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  pointer-events: none;
+  z-index: 40;
+  opacity: 0.2;
+  mix-blend-mode: overlay;
+  background-size: 320px 320px;
+  animation: grain-shift 0.9s steps(1) infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.9; }
+}

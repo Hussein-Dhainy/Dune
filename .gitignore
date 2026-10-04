@@ -24,3 +24,6 @@ playwright-report
 *.njsproj
 *.sln
 *.sw?
+
+# Blender autosave backups
+*.blend1

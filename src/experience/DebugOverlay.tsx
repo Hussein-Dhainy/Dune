@@ -9,7 +9,8 @@ export function DebugOverlay() {
     const timer = window.setInterval(() => {
       const current = state.current
       const sample = sampleCycle(current.position)
-      if (output.current) output.current.textContent = `Position ${current.position.toFixed(3)} / Target ${current.target.toFixed(3)}\nCycle ${(sample.progress * 100).toFixed(1)}% / ${sections[sample.index].label}\nTransition ${(sample.transition * 100).toFixed(1)}% / ${current.phase}`
+      const storm = current.transition
+      if (output.current) output.current.textContent = `Position ${current.position.toFixed(3)} / Target ${current.target.toFixed(3)}\nCycle ${(sample.progress * 100).toFixed(1)}% / ${sections[sample.index].label}\nTransition ${(sample.transition * 100).toFixed(1)}% / ${current.phase}\nWipe ${(storm.coverage * 100).toFixed(0)}% / Scene ${storm.activeSection}`
     }, 100)
     return () => window.clearInterval(timer)
   }, [state])

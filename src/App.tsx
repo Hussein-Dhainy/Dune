@@ -11,6 +11,9 @@ import { useLoopScroll } from './experience/useLoopScroll'
 import { CameraDebugControls, CameraDebugPanel } from './experience/CameraDebug'
 import { cameraPoses } from './experience/cameraPath'
 import type { CameraPose } from './experience/cameraPath'
+import { qualityProfiles, useDesertQuality } from './scene/atmosphere/quality'
+import { GrainOverlay } from './experience/GrainOverlay'
+import { SecondScenePanel } from './experience/SecondScenePanel'
 
 function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEnabled, cameraPose }: {
   lighting: LightingSettings
@@ -24,7 +27,7 @@ function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEn
     <>
       <header className="brand">DUNE <span>Scene navigation prototype</span></header>
       {phase === 'loading' && <div className="loading" role="status">Preparing scene…</div>}
-      <div id="transition-veil" className="transition-veil" aria-hidden="true" />
+      <GrainOverlay />
       {phase === 'interactive' && <p className="scroll-hint">Scroll vertically to explore</p>}
       {import.meta.env.DEV && <DebugOverlay />}
       {import.meta.env.DEV && <LightingDebug lighting={lighting} setLighting={setLighting} />}
@@ -36,24 +39,25 @@ function Interface({ lighting, setLighting, cameraDebugEnabled, setCameraDebugEn
 export default function App() {
   const [lighting, setLighting] = useState(defaultLighting)
   const [cameraDebugEnabled, setCameraDebugEnabled] = useState(false)
+  const quality = qualityProfiles[useDesertQuality()]
   // Seeded from the pose the experience actually settles on, so the lab opens
   // where the scene is rather than at a copy that has to be kept in step.
   // Never mutated: CameraDebugControls reassigns the whole object on capture.
   const cameraPose = useRef<CameraPose>(cameraPoses[0])
   return (
     <main className={`experience${cameraDebugEnabled ? ' camera-debug' : ''}`}>
-      <LoopScrollProvider>
+      <LoopScrollProvider scrollContent={<SecondScenePanel />}>
         {/* The composer renders off-screen and anti-aliases itself, so the
             canvas's own MSAA would be wasted. 1.5 caps the post-processing
-            passes' pixel count on high-DPI screens. */}
+            passes' pixel count on high-DPI screens; phones cap lower still. */}
         <Canvas
           shadows
           camera={{ position: [0, 22, 0.01], fov: 45 }}
-          dpr={[1, 1.5]}
+          dpr={quality.dpr}
           gl={{ antialias: false }}
         >
           <Suspense fallback={null}>
-            <Scene lighting={lighting} />
+            <Scene lighting={lighting} quality={quality} />
           </Suspense>
           <ExperienceDirector cameraDebugEnabled={cameraDebugEnabled} />
           {import.meta.env.DEV && <CameraDebugControls enabled={cameraDebugEnabled} pose={cameraPose} />}

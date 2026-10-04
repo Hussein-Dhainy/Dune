@@ -1,5 +1,4 @@
 export type LightingSettings = {
-  background: string
   ambientColor: string
   ambientIntensity: number
   sunColor: string
@@ -29,10 +28,25 @@ export type LightingSettings = {
   /** Scene luminance (before tone mapping) above which pixels bloom. */
   bloomThreshold: number
   bloomSmoothing: number
+  /** Sky and haze: bright sand at the horizon, darkening to brown overhead.
+   *  Distant terrain fades into exactly this sky, so there is no seam. */
+  hazeHorizonColor: string
+  hazeMidColor: string
+  hazeZenithColor: string
+  /** Distance with no haze at all; keep it beyond the pyramid. */
+  fogNear: number
+  /** Exponential-squared haze density per world unit beyond fogNear. */
+  fogDensity: number
+  /** 0 calm .. 1 sandstorm: thickens haze and sand without recompiling. */
+  storm: number
+  /** Grade of the transition cloud and of fog-backdrop scenes: the dust tones
+   *  are pulled this far (0..1) towards stormTintColor. 0 is pure desert
+   *  sand; 1 is the tint itself, e.g. a muted icy blue-grey. */
+  stormTintColor: string
+  stormTintAmount: number
 }
 
 export const defaultLighting: LightingSettings = {
-  background: '#c2a78e',
   ambientColor: '#ded1c3',
   ambientIntensity: 0.06,
   sunColor: '#ffe1b8',
@@ -48,7 +62,7 @@ export const defaultLighting: LightingSettings = {
   hoverRadius: 3,
   hoverStrength: 1,
   hoverEase: 6.5,
-  glowColor: '#ffffff',
+  glowColor: '#ffcf6b',
   glowSeamIntensity: 0.4,
   glowSeamWidth: 0.7,
   glowCoreIntensity: 2.1,
@@ -56,4 +70,12 @@ export const defaultLighting: LightingSettings = {
   bloomIntensity: 0.9,
   bloomThreshold: 1,
   bloomSmoothing: 0.3,
+  hazeHorizonColor: '#e3cdad',
+  hazeMidColor: '#c6a684',
+  hazeZenithColor: '#6e4e37',
+  fogNear: 30,
+  fogDensity: 0.009,
+  storm: 0.15,
+  stormTintColor: '#a9b3c1',
+  stormTintAmount: 0.35,
 }

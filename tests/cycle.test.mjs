@@ -46,8 +46,9 @@ test('camera pose and velocity meet at the loop boundary', () => {
 })
 
 test('debug navigation selects the nearest occurrence without losing the loop count', () => {
-  assert.equal(nearestSectionPosition(600.2, 0), 600)
-  assert.equal(nearestSectionPosition(-600.2, 0), -600)
+  const loops = cycleLength * 300
+  assert.ok(Math.abs(nearestSectionPosition(loops + 0.2, 0) - loops) < 1e-9)
+  assert.ok(Math.abs(nearestSectionPosition(-loops - 0.2, 0) + loops) < 1e-9)
   assert.ok(Math.abs(nearestSectionPosition(2, 0, sections[0].hold) - 1.2) < 1e-12)
 })
 

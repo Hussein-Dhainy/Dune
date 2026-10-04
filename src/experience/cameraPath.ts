@@ -1,12 +1,34 @@
 import { sampleCycle } from './cycle.ts'
+import { createTransitionState, sampleTransition } from './transitionTimeline.ts'
+import type { TransitionState } from './transitionTimeline.ts'
 import { MathUtils, Vector3 } from 'three'
 
 type Point = readonly [number, number, number]
 export type CameraPose = { position: Point; target: Point }
 
+/** One resting pose per section in cycle.ts, in the same order. */
 export const cameraPoses: readonly CameraPose[] = [
   { position: [-3.393, 5.668, 21.525], target: [0, 1.9, 0] },
+  // Second scene: lower and level. The sandstone shard hangs at the target.
+  { position: [2.6, 2.4, 15.5], target: [0, 2.2, 0] },
 ]
+/** Share of the pointer orbit (below) each section's camera takes. The second
+ *  scene's camera holds still: there the cursor leans the shard instead. */
+export const sectionPointerOrbit: readonly number[] = [1, 0]
+export const baseFov = 45
+
+/**
+ * The sandstorm pull-back. The resting camera sits ~22 units from the
+ * pyramid (itself ~4.7 across), so 6 units back plus a 4 degree wider lens
+ * shrinks it to roughly 70% of its size: noticeable, not dramatic.
+ */
+export const cameraRetreat = {
+  distance: 6,
+  rise: 1.2,
+  fovBoost: 4,
+  /** Share of the move kept under prefers-reduced-motion. */
+  reducedMotionScale: 0.3,
+}
 export const introPose: CameraPose = { position: [0, 22, 0.01], target: [0, 0, 0] }
 
 // Weighted form rather than a + (b - a) * t: the latter is off by an ulp at
@@ -26,9 +48,45 @@ export function mixPose(a: CameraPose, b: CameraPose, progress: number): CameraP
   return { position: mixPoint(a.position, b.position, t), target: mixPoint(a.target, b.target, t) }
 }
 
-export function sampleCamera(position: number): CameraPose {
-  const { index, nextIndex, transition } = sampleCycle(position)
-  return mixPose(cameraPoses[index], cameraPoses[nextIndex], transition)
+/** Dollies a pose straight back along its own view direction, keeping the
+ *  target, and lifts it a little. Amount 0 returns the pose untouched, so the
+ *  resting framing is restored exactly. */
+export function retreatPose(pose: CameraPose, amount: number): CameraPose {
+  if (amount === 0) return pose
+  const [px, py, pz] = pose.position
+  const [tx, ty, tz] = pose.target
+  const length = Math.hypot(px - tx, py - ty, pz - tz) || 1
+  const back = cameraRetreat.distance * amount / length
+  return {
+    position: [
+      px + (px - tx) * back,
+      py + (py - ty) * back + cameraRetreat.rise * amount,
+      pz + (pz - tz) * back,
+    ],
+    target: pose.target,
+  }
+}
+
+export type TransitionCamera = CameraPose & { fov: number }
+
+/** Camera for a transition state: the showing scene's pose, pulled back. */
+export function transitionCamera(transition: TransitionState, reducedMotion = false): TransitionCamera {
+  const amount = transition.retreat * (reducedMotion ? cameraRetreat.reducedMotionScale : 1)
+  const pose = retreatPose(cameraPoses[transition.activeSection], amount)
+  return { position: pose.position, target: pose.target, fov: baseFov + cameraRetreat.fovBoost * amount }
+}
+
+/** Camera the incoming scene is seen through while it shows behind the wipe. */
+export function incomingCamera(transition: TransitionState, reducedMotion = false): TransitionCamera {
+  const amount = transition.incomingRetreat * (reducedMotion ? cameraRetreat.reducedMotionScale : 1)
+  const pose = retreatPose(cameraPoses[transition.nextIndex], amount)
+  return { position: pose.position, target: pose.target, fov: baseFov + cameraRetreat.fovBoost * amount }
+}
+
+const sampleScratch = createTransitionState()
+
+export function sampleCamera(position: number, reducedMotion = false): TransitionCamera {
+  return transitionCamera(sampleTransition(sampleCycle(position), reducedMotion, sampleScratch), reducedMotion)
 }
 
 /**

@@ -1,9 +1,13 @@
+// One unit is scrollConfig.pixelsPerUnit (520px) of scrolling. A section is
+// 3 units, ~1560px: enough room to scrub the wipe without making visitors
+// scroll several full screens before reaching the next scene.
 export const sections = [
-  { id: 'pyramid', label: 'Pyramid', hold: 1.2, transition: 0.8 },
+  { id: 'pyramid', label: 'Pyramid', hold: 1.2, transition: 1.8 },
+  { id: 'second', label: 'Second scene', hold: 1.2, transition: 1.8 },
 ] as const
 
 export const cycleLength = sections.reduce((sum, section) => sum + section.hold + section.transition, 0)
-export const scrollConfig = { pixelsPerUnit: 850, damping: 0.22 }
+export const scrollConfig = { pixelsPerUnit: 520, damping: 0.22 }
 
 export function wrap(value: number, length = cycleLength) {
   return ((value % length) + length) % length

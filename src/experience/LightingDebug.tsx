@@ -39,8 +39,14 @@ export function LightingDebug({ lighting, setLighting }: Props) {
     <details className="debug-overlay lighting-debug" open>
       <summary>Lighting lab</summary>
       <div className="debug-color-grid">
-        <label>Background <input type="color" value={lighting.background}
-          onChange={(event) => update('background', event.currentTarget.value)} /></label>
+        <label>Horizon <input type="color" value={lighting.hazeHorizonColor}
+          onChange={(event) => update('hazeHorizonColor', event.currentTarget.value)} /></label>
+        <label>Mid sky <input type="color" value={lighting.hazeMidColor}
+          onChange={(event) => update('hazeMidColor', event.currentTarget.value)} /></label>
+        <label>Upper sky <input type="color" value={lighting.hazeZenithColor}
+          onChange={(event) => update('hazeZenithColor', event.currentTarget.value)} /></label>
+        <label>Storm tint <input type="color" value={lighting.stormTintColor}
+          onChange={(event) => update('stormTintColor', event.currentTarget.value)} /></label>
         <label>Ambient <input type="color" value={lighting.ambientColor}
           onChange={(event) => update('ambientColor', event.currentTarget.value)} /></label>
         <label>Sun <input type="color" value={lighting.sunColor}
@@ -88,6 +94,14 @@ export function LightingDebug({ lighting, setLighting }: Props) {
         onChange={(value) => update('bloomThreshold', value)} />
       <Slider label="Bloom smoothing" value={lighting.bloomSmoothing} min={0} max={1} step={0.01}
         onChange={(value) => update('bloomSmoothing', value)} />
+      <Slider label="Haze start" value={lighting.fogNear} min={0} max={120} step={1}
+        onChange={(value) => update('fogNear', value)} />
+      <Slider label="Haze density x1000" value={lighting.fogDensity * 1000} min={0} max={40} step={0.5}
+        onChange={(value) => update('fogDensity', value / 1000)} />
+      <Slider label="Sand storm" value={lighting.storm} min={0} max={1} step={0.01}
+        onChange={(value) => update('storm', value)} />
+      <Slider label="Storm tint amount" value={lighting.stormTintAmount} min={0} max={1} step={0.01}
+        onChange={(value) => update('stormTintAmount', value)} />
       <div className="debug-actions">
         <button onClick={() => setLighting(defaultLighting)}>Reset</button>
         <button onClick={copySettings}>Copy values</button>
